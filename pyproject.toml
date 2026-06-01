@@ -1,0 +1,30 @@
+[project]
+name = "octopus-ocr"
+version = "0.1.0"
+description = "OCR Octopus transaction screenshots and export review CSV/OFX files for Actual Budget."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "opencv-python>=4.10.0",
+    "pillow>=10.4.0",
+    "pydantic>=2.8.0",
+    "python-dateutil>=2.9.0",
+]
+
+[project.scripts]
+octopus-ocr = "octopus_ocr.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["octopus_ocr"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
