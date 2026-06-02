@@ -109,8 +109,9 @@ def detect_amount_direction(image_rgb: np.ndarray, bbox: BBox) -> Direction | No
     if crop.size == 0:
         return None
     hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
-    red_mask = cv2.inRange(hsv, np.array([0, 80, 100]), np.array([10, 255, 255]))
-    red_mask |= cv2.inRange(hsv, np.array([170, 80, 100]), np.array([179, 255, 255]))
+    red_mask_low = cv2.inRange(hsv, np.array([0, 80, 100]), np.array([10, 255, 255]))
+    red_mask_high = cv2.inRange(hsv, np.array([170, 80, 100]), np.array([179, 255, 255]))
+    red_mask = cv2.bitwise_or(red_mask_low, red_mask_high)
     green_mask = cv2.inRange(hsv, np.array([35, 70, 80]), np.array([95, 255, 255]))
     red_count = int(np.count_nonzero(red_mask))
     green_count = int(np.count_nonzero(green_mask))

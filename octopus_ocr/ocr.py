@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 from PIL import Image
 
@@ -12,6 +13,11 @@ from octopus_ocr.models import BBox, OcrField
 
 class OcrUnavailableError(RuntimeError):
     pass
+
+
+class TesseractConfig(TypedDict):
+    psm: str
+    vars: NotRequired[dict[str, str]]
 
 
 class TesseractOcr:
@@ -40,7 +46,7 @@ class TesseractOcr:
             text = output_base.with_suffix(".txt").read_text(encoding="utf-8").strip()
         return OcrField(text=text, confidence=None, bbox=bbox)
 
-    def _config_for(self, mode: str) -> dict[str, object]:
+    def _config_for(self, mode: str) -> TesseractConfig:
         if mode == "amount":
             return {
                 "psm": "7",
