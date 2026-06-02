@@ -76,6 +76,12 @@ def _read_row(
     payee = normalize_payee(fields["payee"].text)
     parsed_datetime = parse_datetime(fields["datetime"].text)
     parsed_amount, direction = parse_amount(fields["amount"].text)
+    if parsed_amount is not None and row.amount_direction is not None:
+        color_signed_amount = abs(parsed_amount) if row.amount_direction == "inflow" else -abs(parsed_amount)
+        if color_signed_amount != parsed_amount:
+            warnings.append(f"amount sign corrected from OCR using {row.amount_direction} text color")
+        parsed_amount = color_signed_amount
+        direction = row.amount_direction
     if not payee:
         warnings.append("payee did not parse")
     if parsed_datetime is None:

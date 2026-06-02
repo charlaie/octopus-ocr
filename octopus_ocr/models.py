@@ -7,7 +7,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-Category = Literal["transport", "eat and drink", "living and others", "top-up", "unknown"]
+Category = Literal[
+    "transport", "eat and drink", "living and others", "top-up", "unknown"
+]
 Direction = Literal["outflow", "inflow"]
 
 

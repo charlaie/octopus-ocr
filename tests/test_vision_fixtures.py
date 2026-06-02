@@ -22,3 +22,16 @@ def test_fixture_screenshots_have_detectable_transaction_rows() -> None:
     assert "eat and drink" in categories
     assert "living and others" in categories
     assert "top-up" in categories
+
+
+def test_multiline_payee_uses_lower_date_bbox() -> None:
+    rows = detect_rows(load_rgb(Path("data/2.PNG")))
+    first_paper = rows[8]
+    second_paper = rows[9]
+
+    assert first_paper.category == "eat and drink"
+    assert second_paper.category == "eat and drink"
+    assert second_paper.row_bbox.height > first_paper.row_bbox.height
+    assert second_paper.payee_bbox.height > first_paper.payee_bbox.height
+    assert second_paper.datetime_bbox.y > second_paper.payee_bbox.y + second_paper.payee_bbox.height - 5
+    assert second_paper.amount_direction == "outflow"

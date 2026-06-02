@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from octopus_ocr.models import BBox, Category
+from octopus_ocr.models import BBox, Category, Direction
 
 REFERENCE_WIDTH = 1170
 REFERENCE_HEIGHT = 2532
@@ -21,6 +21,7 @@ class RowRegion:
     payee_bbox: BBox
     datetime_bbox: BBox
     amount_bbox: BBox
+    amount_direction: Direction | None = None
 
 
 def load_rgb(path: Path) -> np.ndarray:
@@ -55,33 +56,33 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
 
     icons = _detect_icon_blobs(image_rgb, icon_x_min, icon_x_max, content_top, content_bottom)
     rows: list[RowRegion] = []
-    for cx, cy, radius, category in icons:
-        row_top = int(cy - max(78 * sy, radius * 1.45))
-        row_bottom = int(cy + max(122 * sy, radius * 1.75))
-        if row_top < content_top - 20 or row_bottom > height - int(70 * sy):
+    for index, (cx, cy, radius, category) in enumerate(icons):
+        prev_cy = icons[index - 1][1] if index > 0 else None
+        next_cy = icons[index + 1][1] if index < len(icons) - 1 else None
+        row_top = (
+            int((prev_cy + cy) / 2)
+            if prev_cy is not None
+            else max(content_top, int(cy - max(95 * sy, radius * 1.7)))
+        )
+        row_bottom = (
+            int((cy + next_cy) / 2)
+            if next_cy is not None
+            else min(content_bottom, int(cy + max(135 * sy, radius * 2.1)))
+        )
+        if row_top < content_top - 20 or row_bottom > height - int(70 * sy) or row_bottom - row_top < int(170 * sy):
             continue
 
-        payee_bbox = BBox(
-            x=int(205 * sx),
-            y=max(0, int(cy - 58 * sy)),
-            width=int(600 * sx),
-            height=int(72 * sy),
-        )
-        datetime_bbox = BBox(
-            x=int(205 * sx),
-            y=int(cy + 14 * sy),
-            width=int(430 * sx),
-            height=int(52 * sy),
-        )
+        row_bbox = BBox(x=int(40 * sx), y=row_top, width=int(1060 * sx), height=row_bottom - row_top)
+        payee_bbox, datetime_bbox = _detect_text_field_bboxes(image_rgb, row_bbox, sx, sy, cy)
         amount_bbox = BBox(
             x=int(850 * sx),
-            y=int(cy - 45 * sy),
+            y=max(row_top, int(cy - 45 * sy)),
             width=int(215 * sx),
-            height=int(80 * sy),
+            height=min(int(80 * sy), row_bottom - max(row_top, int(cy - 45 * sy))),
         )
         rows.append(
             RowRegion(
-                row_bbox=BBox(x=int(40 * sx), y=row_top, width=int(1060 * sx), height=row_bottom - row_top),
+                row_bbox=row_bbox,
                 icon_bbox=BBox(
                     x=int(cx - radius),
                     y=int(cy - radius),
@@ -92,9 +93,126 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
                 payee_bbox=payee_bbox,
                 datetime_bbox=datetime_bbox,
                 amount_bbox=amount_bbox,
+                amount_direction=detect_amount_direction(image_rgb, amount_bbox),
             )
         )
     return rows
+
+
+def detect_amount_direction(image_rgb: np.ndarray, bbox: BBox) -> Direction | None:
+    h, w = image_rgb.shape[:2]
+    x1 = max(0, bbox.x)
+    y1 = max(0, bbox.y)
+    x2 = min(w, bbox.x + bbox.width)
+    y2 = min(h, bbox.y + bbox.height)
+    crop = image_rgb[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
+    red_mask = cv2.inRange(hsv, np.array([0, 80, 100]), np.array([10, 255, 255]))
+    red_mask |= cv2.inRange(hsv, np.array([170, 80, 100]), np.array([179, 255, 255]))
+    green_mask = cv2.inRange(hsv, np.array([35, 70, 80]), np.array([95, 255, 255]))
+    red_count = int(np.count_nonzero(red_mask))
+    green_count = int(np.count_nonzero(green_mask))
+    if red_count < 20 and green_count < 20:
+        return None
+    return "outflow" if red_count >= green_count else "inflow"
+
+
+def _detect_text_field_bboxes(
+    image_rgb: np.ndarray,
+    row_bbox: BBox,
+    sx: float,
+    sy: float,
+    cy: int,
+) -> tuple[BBox, BBox]:
+    text_x = int(205 * sx)
+    payee_width = int(650 * sx)
+    date_width = int(430 * sx)
+    y_padding = int(10 * sy)
+    line_runs = _detect_text_line_runs(
+        image_rgb,
+        BBox(
+            x=text_x,
+            y=row_bbox.y,
+            width=payee_width,
+            height=row_bbox.height,
+        ),
+    )
+    if len(line_runs) >= 2:
+        date_top, date_bottom = line_runs[-1]
+        payee_top = line_runs[0][0]
+        payee_bottom = line_runs[-2][1]
+        return (
+            BBox(
+                x=text_x,
+                y=max(row_bbox.y, payee_top - y_padding),
+                width=payee_width,
+                height=min(row_bbox.y + row_bbox.height, payee_bottom + y_padding)
+                - max(row_bbox.y, payee_top - y_padding),
+            ),
+            BBox(
+                x=text_x,
+                y=max(row_bbox.y, date_top - y_padding),
+                width=date_width,
+                height=min(row_bbox.y + row_bbox.height, date_bottom + y_padding)
+                - max(row_bbox.y, date_top - y_padding),
+            ),
+        )
+
+    return (
+        BBox(
+            x=text_x,
+            y=max(0, int(cy - 58 * sy)),
+            width=payee_width,
+            height=int(72 * sy),
+        ),
+        BBox(
+            x=text_x,
+            y=int(cy + 14 * sy),
+            width=date_width,
+            height=int(52 * sy),
+        ),
+    )
+
+
+def _detect_text_line_runs(image_rgb: np.ndarray, bbox: BBox) -> list[tuple[int, int]]:
+    h, w = image_rgb.shape[:2]
+    x1 = max(0, bbox.x)
+    y1 = max(0, bbox.y)
+    x2 = min(w, bbox.x + bbox.width)
+    y2 = min(h, bbox.y + bbox.height)
+    crop = image_rgb[y1:y2, x1:x2]
+    if crop.size == 0:
+        return []
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+    mask = (gray < 190).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    projection = np.count_nonzero(mask, axis=1)
+    active = projection > max(8, int((x2 - x1) * 0.015))
+
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for offset, is_active in enumerate(active):
+        if is_active and start is None:
+            start = offset
+        elif not is_active and start is not None:
+            runs.append((start, offset))
+            start = None
+    if start is not None:
+        runs.append((start, len(active)))
+
+    merged: list[tuple[int, int]] = []
+    for start, end in runs:
+        if end - start < 8:
+            continue
+        absolute = (y1 + start, y1 + end)
+        if merged and absolute[0] - merged[-1][1] < 12:
+            merged[-1] = (merged[-1][0], absolute[1])
+        else:
+            merged.append(absolute)
+    return merged
 
 
 def _detect_icon_blobs(

@@ -10,6 +10,8 @@ def test_parse_amount_handles_signs_and_symbols() -> None:
     assert parse_amount("−123.8") == (Decimal("-123.8"), "outflow")
     assert parse_amount("+500.0") == (Decimal("500.0"), "inflow")
     assert parse_amount("HK$ 40.0") == (Decimal("40.0"), "inflow")
+    assert parse_amount("20") == (Decimal("2.0"), "inflow")
+    assert parse_amount("-820") == (Decimal("-82.0"), "outflow")
 
 
 def test_parse_datetime_requires_octopus_format() -> None:

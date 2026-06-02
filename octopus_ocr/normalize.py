@@ -27,6 +27,13 @@ def parse_amount(text: str) -> tuple[Decimal | None, Direction | None]:
         return None, None
 
     value_text = match.group(1).replace(" ", "")
+    sign = ""
+    if value_text[:1] in {"+", "-"}:
+        sign = value_text[0]
+        value_text = value_text[1:]
+    if "." not in value_text and len(value_text) >= 2:
+        value_text = f"{value_text[:-1]}.{value_text[-1]}"
+    value_text = f"{sign}{value_text}"
     try:
         amount = Decimal(value_text).quantize(Decimal("0.1"))
     except InvalidOperation:
