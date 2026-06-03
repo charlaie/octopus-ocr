@@ -25,9 +25,14 @@ uv sync --dev
 
 ```bash
 uv run octopus-ocr data/*.PNG --out out/
+uv run octopus-ocr data/screen-recording.mp4 --out out/ --video-sample-fps 5
 ```
 
 Inspect `out/review.csv` before importing `out/actual.ofx` into Actual Budget.
+
+Video input is treated as a screenshot source: the CLI samples the recording, keeps coverage-based keyframes in
+`out/frames/`, and then runs the same screenshot OCR pipeline. `--video-sample-fps` controls video sampling before
+keyframe filtering; it does not mean every sampled frame is OCRed.
 
 ## Notes
 

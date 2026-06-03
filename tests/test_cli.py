@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
 from octopus_ocr.cli import main
 from octopus_ocr.ocr import OcrUnavailableError
+from octopus_ocr.video import VideoExtractionResult
 
 
 def test_cli_reports_missing_ocr(monkeypatch, capsys) -> None:
@@ -13,3 +19,57 @@ def test_cli_reports_missing_ocr(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert code == 2
     assert "install tesseract" in captured.err
+
+
+def test_cli_expands_video_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
+    video_path = tmp_path / "screen recording.mp4"
+    video_path.write_bytes(b"not a real video because extraction is stubbed")
+    extracted_frame = tmp_path / "frame_0001.png"
+    calls = {}
+
+    def fake_extract(video_path_arg, frames_dir, *, sample_fps):
+        calls["extract"] = (video_path_arg, frames_dir, sample_fps)
+        return VideoExtractionResult(
+            frames=[extracted_frame],
+            warnings=["possible skipped transactions"],
+            sampled_frame_count=10,
+            relevant_frame_count=8,
+        )
+
+    def fake_pipeline(image_paths, out_dir, *, write_debug=True):
+        calls["pipeline"] = (image_paths, out_dir, write_debug)
+        return SimpleNamespace(candidates=[], transactions=[])
+
+    monkeypatch.setattr("octopus_ocr.cli.extract_video_keyframes", fake_extract)
+    monkeypatch.setattr("octopus_ocr.cli.run_pipeline", fake_pipeline)
+
+    out_dir = tmp_path / "out"
+    code = main(["data/1.PNG", str(video_path), "--out", str(out_dir), "--video-sample-fps", "3", "--no-debug"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert calls["extract"] == (video_path, out_dir / "frames" / "screen_recording", 3.0)
+    assert calls["pipeline"] == ([Path("data/1.PNG"), extracted_frame], out_dir, False)
+    assert "Extracted 1 keyframe(s)" in captured.out
+    assert "Warning: possible skipped transactions" in captured.err
+
+
+def test_cli_rejects_non_positive_video_sample_fps() -> None:
+    with pytest.raises(SystemExit):
+        main(["data/1.PNG", "--video-sample-fps", "0"])
+
+
+def test_cli_reports_video_extraction_errors(monkeypatch, tmp_path: Path, capsys) -> None:
+    video_path = tmp_path / "bad.mp4"
+    video_path.write_bytes(b"not a valid video")
+
+    def fail_extract(*args, **kwargs):
+        raise ValueError("Could not read video")
+
+    monkeypatch.setattr("octopus_ocr.cli.extract_video_keyframes", fail_extract)
+
+    with pytest.raises(SystemExit):
+        main([str(video_path)])
+
+    captured = capsys.readouterr()
+    assert "Could not read video" in captured.err
