@@ -118,9 +118,7 @@ NEWFILEUID:NONE
 
 def _ofx_transaction(record: TransactionRecord) -> str:
     trntype = "CREDIT" if record.amount >= 0 else "DEBIT"
-    memo = f"{record.category}; {record.dedupe_status}"
-    if record.warnings:
-        memo = f"{memo}; {' | '.join(record.warnings)}"
+    memo = record.category
     return f"""          <STMTTRN>
             <TRNTYPE>{trntype}
             <DTPOSTED>{record.datetime.strftime("%Y%m%d%H%M%S")}
