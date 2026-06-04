@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from octopus_ocr.vision import detect_rows, load_rgb
+from octopus_ocr.vision import REFERENCE_HEIGHT, REFERENCE_WIDTH, detect_rows, load_rgb  # noqa: E402
 
 
 def test_fixture_screenshots_have_detectable_transaction_rows() -> None:
@@ -37,6 +38,23 @@ def test_fare_subsidy_plus_icon_creates_own_row() -> None:
     assert 1095 <= subsidy.datetime_bbox.y <= 1120
     assert subsidy.datetime_bbox.height <= 60
     assert following.row_bbox.y >= subsidy.row_bbox.y + subsidy.row_bbox.height
+
+
+def test_top_clipped_first_row_is_skipped() -> None:
+    image_rgb = np.full((REFERENCE_HEIGHT, REFERENCE_WIDTH, 3), 255, dtype=np.uint8)
+
+    cv2.circle(image_rgb, (115, 270), 48, (65, 200, 120), -1)
+    cv2.rectangle(image_rgb, (205, 247), (650, 268), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 292), (485, 315), (95, 95, 95), -1)
+
+    cv2.circle(image_rgb, (115, 475), 48, (50, 175, 230), -1)
+    cv2.rectangle(image_rgb, (205, 450), (650, 475), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 520), (485, 545), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 455), (1010, 500), (190, 0, 0), -1)
+
+    rows = detect_rows(image_rgb)
+
+    assert [row.category for row in rows] == ["transport"]
 
 
 def test_multiline_payee_uses_lower_date_bbox() -> None:

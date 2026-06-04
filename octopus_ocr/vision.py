@@ -74,6 +74,8 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
 
         row_bbox = BBox(x=int(40 * sx), y=row_top, width=int(1060 * sx), height=row_bottom - row_top)
         payee_bbox, datetime_bbox = _detect_text_field_bboxes(image_rgb, row_bbox, sx, sy, cy)
+        if _is_top_clipped_first_row(prev_cy, row_top, content_top, payee_bbox, sy):
+            continue
         amount_bbox = BBox(
             x=int(850 * sx),
             y=max(row_top, int(cy - 45 * sy)),
@@ -97,6 +99,20 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
             )
         )
     return rows
+
+
+def _is_top_clipped_first_row(
+    prev_cy: int | None,
+    row_top: int,
+    content_top: int,
+    payee_bbox: BBox,
+    sy: float,
+) -> bool:
+    if prev_cy is not None:
+        return False
+    if row_top > content_top + int(4 * sy):
+        return False
+    return payee_bbox.y - row_top < int(30 * sy)
 
 
 def detect_amount_direction(image_rgb: np.ndarray, bbox: BBox) -> Direction | None:
