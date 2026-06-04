@@ -18,10 +18,13 @@ The Octopus app category icons are highly distinctive:
 - Orange circular fork/knife icon: `eat and drink`
 - Green circular shopping bag icon: `living and others`
 - Small AAVS/Octopus logo: `top-up`
+- Pale circular plus icon: `fare subsidy`
 
 We use HSV color thresholds because these icon colors are saturated and stable across screenshots. HSV is less brittle than raw RGB for this kind of detection.
 
 The AAVS/top-up logo also contains orange, so it can overlap the food icon hue range. To avoid classifying top-ups as food, full category badges must pass a larger area/radius check; small orange logo fragments remain top-up candidates.
+
+The fare subsidy badge is intentionally detected from its dark plus glyph instead of the pale circular background, which is close to the app's white row background.
 
 ## Important Layout Constants
 

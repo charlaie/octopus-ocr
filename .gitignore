@@ -13,7 +13,8 @@ wheels/
 .venv
 
 # Local OCR input
-data/
+data/*
+!data/fare_subsidy.jpeg
 
 # Local OCR output
 out/

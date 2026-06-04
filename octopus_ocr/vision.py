@@ -255,6 +255,16 @@ def _detect_icon_blobs(
             cy = int(content_top + y)
             detections.append((cx, cy, max(radius, 34.0), category))  # type: ignore[arg-type]
 
+    detections.extend(
+        _detect_fare_subsidy_icons(
+            hsv,
+            image_rgb.shape[1] / REFERENCE_WIDTH,
+            image_rgb.shape[0] / REFERENCE_HEIGHT,
+            icon_x_min,
+            content_top,
+        )
+    )
+
     detections.sort(key=lambda item: item[1])
     merged: list[tuple[int, int, float, Category]] = []
     for detection in detections:
@@ -271,6 +281,46 @@ def _detect_icon_blobs(
     return merged
 
 
+def _detect_fare_subsidy_icons(
+    hsv: np.ndarray,
+    sx: float,
+    sy: float,
+    icon_x_min: int,
+    content_top: int,
+) -> list[tuple[int, int, float, Category]]:
+    dark_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([179, 80, 95]))
+    dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    detections: list[tuple[int, int, float, Category]] = []
+    min_width = 26 * sx
+    max_width = 50 * sx
+    min_height = 26 * sy
+    max_height = 50 * sy
+    min_area = 120 * sx * sy
+    max_area = 700 * sx * sy
+    radius = 48.0 * max(sx, sy)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        x, y, width, height = cv2.boundingRect(contour)
+        if not (min_width <= width <= max_width and min_height <= height <= max_height):
+            continue
+        if not min_area <= area <= max_area:
+            continue
+        fill_ratio = area / (width * height)
+        if not 0.12 <= fill_ratio <= 0.35:
+            continue
+        detections.append(
+            (
+                int(icon_x_min + x + width / 2),
+                int(content_top + y + height / 2),
+                radius,
+                "fare subsidy",
+            )
+        )
+    return detections
+
+
 def annotate_rows(image_rgb: np.ndarray, rows: list[RowRegion]) -> Image.Image:
     bgr = cv2.cvtColor(image_rgb.copy(), cv2.COLOR_RGB2BGR)
     colors = {
@@ -278,6 +328,7 @@ def annotate_rows(image_rgb: np.ndarray, rows: list[RowRegion]) -> Image.Image:
         "eat and drink": (0, 170, 255),
         "living and others": (0, 190, 0),
         "top-up": (0, 128, 255),
+        "fare subsidy": (180, 0, 180),
         "unknown": (180, 180, 180),
     }
     for row in rows:

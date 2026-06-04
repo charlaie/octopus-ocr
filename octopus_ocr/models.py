@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 Category = Literal[
-    "transport", "eat and drink", "living and others", "top-up", "unknown"
+    "transport", "eat and drink", "living and others", "top-up", "fare subsidy", "unknown"
 ]
 Direction = Literal["outflow", "inflow"]
 

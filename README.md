@@ -36,4 +36,4 @@ keyframe filtering; it does not mean every sampled frame is OCRed.
 
 ## Notes
 
-The pipeline detects transaction rows and categories from the screenshot layout, then runs Tesseract only on cropped payee/date/amount fields. Top-ups are exported as inflows for v1.
+The pipeline detects transaction rows and categories from the screenshot layout, then runs Tesseract only on cropped payee/date/amount fields. Top-ups and fare subsidies are exported as inflows when their amount text is positive/green.
