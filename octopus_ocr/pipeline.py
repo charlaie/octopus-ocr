@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
+from typing import Iterator
 
 from octopus_ocr.dedupe import dedupe_candidates
 from octopus_ocr.exporters import write_json, write_ofx, write_review_csv
-from octopus_ocr.models import BBox, OcrField, PipelineResult, TransactionCandidate
+from octopus_ocr.models import BBox, OcrField, PipelineResult, ProcessTiming, TransactionCandidate
 from octopus_ocr.normalize import normalize_payee, parse_amount, parse_datetime
 from octopus_ocr.ocr import TesseractOcr
 from octopus_ocr.vision import annotate_rows, detect_rows, load_rgb, to_pil_crop
@@ -18,34 +21,47 @@ def run_pipeline(
     write_debug: bool = True,
     ocr: TesseractOcr | None = None,
 ) -> PipelineResult:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    debug_dir = out_dir / "debug"
-    if write_debug:
-        debug_dir.mkdir(parents=True, exist_ok=True)
+    timer = _PipelineTimer()
+    with timer.step("prepare output directories"):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        debug_dir = out_dir / "debug"
+        if write_debug:
+            debug_dir.mkdir(parents=True, exist_ok=True)
 
-    ocr_engine = ocr or TesseractOcr()
-    if hasattr(ocr_engine, "assert_available"):
-        ocr_engine.assert_available()
+    with timer.step("initialize OCR engine"):
+        ocr_engine = ocr or TesseractOcr()
+        if hasattr(ocr_engine, "assert_available"):
+            ocr_engine.assert_available()
     candidates: list[TransactionCandidate] = []
     for image_path in image_paths:
-        image_rgb = load_rgb(image_path)
-        rows = detect_rows(image_rgb)
+        with timer.step("load images"):
+            image_rgb = load_rgb(image_path)
+        with timer.step("detect rows"):
+            rows = detect_rows(image_rgb)
         if write_debug:
-            annotate_rows(image_rgb, rows).save(debug_dir / f"{image_path.stem}_annotated.png")
+            with timer.step("write debug annotations"):
+                annotate_rows(image_rgb, rows).save(debug_dir / f"{image_path.stem}_annotated.png")
         for row_index, row in enumerate(rows):
-            candidate = _read_row(image_rgb, image_path, row_index, row, ocr_engine, debug_dir if write_debug else None)
+            with timer.step("OCR rows"):
+                candidate = _read_row(image_rgb, image_path, row_index, row, ocr_engine, debug_dir if write_debug else None)
             candidates.append(candidate)
 
-    records = dedupe_candidates(candidates)
+    with timer.step("dedupe transactions"):
+        records = dedupe_candidates(candidates)
     result = PipelineResult(
         generated_at=datetime.now(),
         input_images=[str(path) for path in image_paths],
         candidates=candidates,
         transactions=records,
     )
-    write_json(result, out_dir / "transactions.json")
-    write_review_csv(records, out_dir / "review.csv")
-    write_ofx(records, out_dir / "actual.ofx")
+    with timer.step("write review.csv"):
+        write_review_csv(records, out_dir / "review.csv")
+    with timer.step("write actual.ofx"):
+        write_ofx(records, out_dir / "actual.ofx")
+    result.timings = list(timer.timings)
+    with timer.step("write transactions.json"):
+        write_json(result, out_dir / "transactions.json")
+    result.timings = list(timer.timings)
     return result
 
 
@@ -108,3 +124,24 @@ def _read_row(
         direction=direction,
         warnings=warnings,
     )
+
+
+class _PipelineTimer:
+    def __init__(self) -> None:
+        self._by_name: dict[str, ProcessTiming] = {}
+        self.timings: list[ProcessTiming] = []
+
+    @contextmanager
+    def step(self, name: str) -> Iterator[None]:
+        started = perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = perf_counter() - started
+            existing = self._by_name.get(name)
+            if existing is None:
+                timing = ProcessTiming(name=name, seconds=elapsed)
+                self._by_name[name] = timing
+                self.timings.append(timing)
+            else:
+                existing.seconds += elapsed

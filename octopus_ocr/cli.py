@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from time import perf_counter
 
+from octopus_ocr.models import ProcessTiming
 from octopus_ocr.ocr import OcrUnavailableError
 from octopus_ocr.pipeline import run_pipeline
 from octopus_ocr.video import DEFAULT_VIDEO_SAMPLE_FPS, extract_video_keyframes, is_video_path
@@ -42,16 +44,24 @@ def main(argv: list[str] | None = None) -> int:
 
     image_paths: list[Path] = []
     video_warnings: list[str] = []
+    timings: list[ProcessTiming] = []
     for input_path in input_paths:
         if not is_video_path(input_path):
             image_paths.append(input_path)
             continue
 
         frame_dir = args.out / "frames" / _safe_stem(input_path)
+        started = perf_counter()
         try:
             extraction = extract_video_keyframes(input_path, frame_dir, sample_fps=args.video_sample_fps)
         except ValueError as exc:
             parser.error(str(exc))
+        timings.append(
+            ProcessTiming(
+                name=f"extract video keyframes ({input_path.name})",
+                seconds=perf_counter() - started,
+            )
+        )
         image_paths.extend(extraction.frames)
         video_warnings.extend(extraction.warnings)
         print(
@@ -68,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     except OcrUnavailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
+    timings.extend(getattr(result, "timings", []))
     for warning in video_warnings:
         print(f"Warning: {warning}", file=sys.stderr)
     parsed = len([candidate for candidate in result.candidates if not candidate.warnings])
@@ -77,12 +88,33 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {args.out / 'transactions.json'}")
     print(f"Wrote {args.out / 'review.csv'}")
     print(f"Wrote {args.out / 'actual.ofx'}")
+    _print_timings(timings)
     return 0
 
 
 def _safe_stem(path: Path) -> str:
     cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in path.stem)
     return cleaned.strip("_") or "video"
+
+
+def _print_timings(timings: list[ProcessTiming]) -> None:
+    if not timings:
+        return
+    label_width = max(len(timing.name) for timing in timings)
+    print("Timings:")
+    for timing in timings:
+        print(f"  {timing.name:<{label_width}}  {_format_duration(timing.seconds)}")
+    total_seconds = sum(timing.seconds for timing in timings)
+    print(f"  {'total':<{label_width}}  {_format_duration(total_seconds)}")
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds < 1:
+        return f"{seconds * 1000:.0f} ms"
+    if seconds < 60:
+        return f"{seconds:.2f} s"
+    minutes, remaining_seconds = divmod(seconds, 60)
+    return f"{int(minutes)}m {remaining_seconds:04.1f}s"
 
 
 if __name__ == "__main__":

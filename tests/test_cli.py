@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from octopus_ocr.cli import main
+from octopus_ocr.cli import _format_duration, main
+from octopus_ocr.models import ProcessTiming
 from octopus_ocr.ocr import OcrUnavailableError
 from octopus_ocr.video import VideoExtractionResult
 
@@ -51,7 +52,41 @@ def test_cli_expands_video_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
     assert calls["extract"] == (video_path, out_dir / "frames" / "screen_recording", 3.0)
     assert calls["pipeline"] == ([Path("data/1.PNG"), extracted_frame], out_dir, False)
     assert "Extracted 1 keyframe(s)" in captured.out
+    assert "Timings:" in captured.out
+    assert "extract video keyframes (screen recording.mp4)" in captured.out
     assert "Warning: possible skipped transactions" in captured.err
+
+
+def test_cli_prints_pipeline_timings(monkeypatch, capsys) -> None:
+    def fake_pipeline(*args, **kwargs):
+        return SimpleNamespace(
+            candidates=[],
+            transactions=[],
+            timings=[
+                ProcessTiming(name="load images", seconds=0.25),
+                ProcessTiming(name="OCR rows", seconds=1.5),
+            ],
+        )
+
+    monkeypatch.setattr("octopus_ocr.cli.run_pipeline", fake_pipeline)
+
+    code = main(["data/1.PNG"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert "Timings:" in captured.out
+    assert "load images" in captured.out
+    assert "250 ms" in captured.out
+    assert "OCR rows" in captured.out
+    assert "1.50 s" in captured.out
+    assert "total" in captured.out
+    assert "1.75 s" in captured.out
+
+
+def test_format_duration() -> None:
+    assert _format_duration(0.1234) == "123 ms"
+    assert _format_duration(3.456) == "3.46 s"
+    assert _format_duration(65.0) == "1m 05.0s"
 
 
 def test_cli_rejects_non_positive_video_sample_fps() -> None:

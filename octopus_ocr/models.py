@@ -59,8 +59,14 @@ class TransactionRecord(BaseModel):
     raw_candidates: list[TransactionCandidate] = Field(default_factory=list)
 
 
+class ProcessTiming(BaseModel):
+    name: str
+    seconds: float
+
+
 class PipelineResult(BaseModel):
     generated_at: datetime
     input_images: list[str]
     candidates: list[TransactionCandidate]
     transactions: list[TransactionRecord]
+    timings: list[ProcessTiming] = Field(default_factory=list, exclude=True)
