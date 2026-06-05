@@ -247,9 +247,6 @@ def _detect_icon_blobs(
         "eat and drink": cv2.inRange(hsv, np.array([16, 90, 130]), np.array([32, 255, 255])),
         "living and others": cv2.inRange(hsv, np.array([55, 65, 120]), np.array([85, 255, 255])),
     }
-    # Top-up/AAVS icons are not circular single-color badges; detect the strong orange logo separately.
-    top_up_mask = cv2.inRange(hsv, np.array([7, 70, 120]), np.array([20, 255, 255]))
-    masks["top-up"] = top_up_mask
 
     detections: list[tuple[int, int, float, Category]] = []
     kernel = np.ones((5, 5), np.uint8)
@@ -260,17 +257,24 @@ def _detect_icon_blobs(
             area = cv2.contourArea(contour)
             if area < 500:
                 continue
-            if category != "top-up" and area < 2500:
+            if area < 2500:
                 continue
             (x, y), radius = cv2.minEnclosingCircle(contour)
-            if category != "top-up" and not 36 <= radius <= 64:
-                continue
-            if category == "top-up" and area < 180:
+            if not 36 <= radius <= 64:
                 continue
             cx = int(icon_x_min + x)
             cy = int(content_top + y)
             detections.append((cx, cy, max(radius, 34.0), category))  # type: ignore[arg-type]
 
+    detections.extend(
+        _detect_top_up_icons(
+            hsv,
+            image_rgb.shape[1] / REFERENCE_WIDTH,
+            image_rgb.shape[0] / REFERENCE_HEIGHT,
+            icon_x_min,
+            content_top,
+        )
+    )
     detections.extend(
         _detect_fare_subsidy_icons(
             hsv,
@@ -295,6 +299,43 @@ def _detect_icon_blobs(
         else:
             merged.append(detection)
     return merged
+
+
+def _detect_top_up_icons(
+    hsv: np.ndarray,
+    sx: float,
+    sy: float,
+    icon_x_min: int,
+    content_top: int,
+) -> list[tuple[int, int, float, Category]]:
+    top_up_mask = cv2.inRange(hsv, np.array([5, 45, 90]), np.array([28, 255, 255]))
+    top_up_mask = cv2.morphologyEx(top_up_mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    contours, _ = cv2.findContours(top_up_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    detections: list[tuple[int, int, float, Category]] = []
+    min_width = 16 * sx
+    max_width = 88 * sx
+    min_height = 10 * sy
+    max_height = 68 * sy
+    min_area = 70 * sx * sy
+    max_area = 1800 * sx * sy
+    radius = 48.0 * max(sx, sy)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        x, y, width, height = cv2.boundingRect(contour)
+        if not (min_width <= width <= max_width and min_height <= height <= max_height):
+            continue
+        if not min_area <= area <= max_area:
+            continue
+        detections.append(
+            (
+                int(icon_x_min + x + width / 2),
+                int(content_top + y + height / 2),
+                radius,
+                "top-up",
+            )
+        )
+    return detections
 
 
 def _detect_fare_subsidy_icons(

@@ -57,6 +57,28 @@ def test_top_clipped_first_row_is_skipped() -> None:
     assert [row.category for row in rows] == ["transport"]
 
 
+def test_small_top_up_logo_fragment_creates_own_row() -> None:
+    image_rgb = np.full((REFERENCE_HEIGHT, REFERENCE_WIDTH, 3), 255, dtype=np.uint8)
+
+    cv2.circle(image_rgb, (115, 475), 48, (50, 175, 230), -1)
+    cv2.rectangle(image_rgb, (205, 450), (650, 475), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 520), (485, 545), (95, 95, 95), -1)
+
+    cv2.ellipse(image_rgb, (105, 675), (19, 8), 0, 0, 360, (235, 115, 20), -1)
+    cv2.rectangle(image_rgb, (205, 650), (650, 675), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 720), (485, 745), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 655), (1010, 700), (30, 145, 30), -1)
+
+    cv2.circle(image_rgb, (115, 880), 48, (250, 175, 55), -1)
+    cv2.rectangle(image_rgb, (205, 855), (650, 880), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 925), (485, 950), (95, 95, 95), -1)
+
+    rows = detect_rows(image_rgb)
+
+    assert [row.category for row in rows] == ["transport", "top-up", "eat and drink"]
+    assert rows[1].amount_direction == "inflow"
+
+
 def test_multiline_payee_uses_lower_date_bbox() -> None:
     rows = detect_rows(load_rgb(Path("data/2.PNG")))
     first_paper = rows[8]
