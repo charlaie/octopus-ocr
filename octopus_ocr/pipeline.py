@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import Iterator
 
 from octopus_ocr.dedupe import dedupe_candidates
-from octopus_ocr.exporters import write_json, write_ofx, write_review_csv
+from octopus_ocr.exporters import write_json, write_monthly_category_csv, write_ofx, write_review_csv
 from octopus_ocr.models import BBox, OcrField, PipelineResult, ProcessTiming, TransactionCandidate
 from octopus_ocr.normalize import normalize_payee, parse_amount, parse_datetime
 from octopus_ocr.ocr import TesseractOcr
@@ -56,6 +56,8 @@ def run_pipeline(
     )
     with timer.step("write review.csv"):
         write_review_csv(records, out_dir / "review.csv")
+    with timer.step("write monthly_category_totals.csv"):
+        write_monthly_category_csv(records, out_dir / "monthly_category_totals.csv")
     with timer.step("write actual.ofx"):
         write_ofx(records, out_dir / "actual.ofx")
     result.timings = list(timer.timings)

@@ -87,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(result.candidates) - parsed} row(s) have warnings; inspect {args.out / 'review.csv'}.")
     print(f"Wrote {args.out / 'transactions.json'}")
     print(f"Wrote {args.out / 'review.csv'}")
+    print(f"Wrote {args.out / 'monthly_category_totals.csv'}")
     print(f"Wrote {args.out / 'actual.ofx'}")
     _print_timings(timings)
     return 0

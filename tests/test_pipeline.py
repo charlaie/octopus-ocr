@@ -45,6 +45,7 @@ def test_pipeline_returns_step_timings(monkeypatch, tmp_path: Path) -> None:
         "write debug annotations",
         "dedupe transactions",
         "write review.csv",
+        "write monthly_category_totals.csv",
         "write actual.ofx",
         "write transactions.json",
     ]
