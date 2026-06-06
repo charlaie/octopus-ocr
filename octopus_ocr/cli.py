@@ -4,9 +4,10 @@ import argparse
 import sys
 from pathlib import Path
 from time import perf_counter
+from typing import cast
 
 from octopus_ocr.models import ProcessTiming
-from octopus_ocr.ocr import OcrUnavailableError
+from octopus_ocr.ocr import OcrEngineName, OcrUnavailableError
 from octopus_ocr.pipeline import run_pipeline
 from octopus_ocr.video import DEFAULT_VIDEO_SAMPLE_FPS, extract_video_keyframes, is_video_path
 
@@ -19,6 +20,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("inputs", nargs="+", type=Path, help="Octopus screenshot image or screen recording paths.")
     parser.add_argument("--out", type=Path, default=Path("out"), help="Output directory.")
     parser.add_argument("--no-debug", action="store_true", help="Do not write debug crops/annotated screenshots.")
+    parser.add_argument(
+        "--ocr-engine",
+        choices=["tesseract", "paddle"],
+        default="tesseract",
+        help="OCR backend to use for cropped text fields. Default: tesseract.",
+    )
+    parser.add_argument(
+        "--paddle-model",
+        default="en_PP-OCRv5_mobile_rec",
+        help="PaddleOCR TextRecognition model to use with --ocr-engine paddle.",
+    )
     parser.add_argument(
         "--video-sample-fps",
         type=float,
@@ -74,7 +86,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("No screenshot images or video keyframes were found.")
 
     try:
-        result = run_pipeline(image_paths, args.out, write_debug=not args.no_debug)
+        result = run_pipeline(
+            image_paths,
+            args.out,
+            write_debug=not args.no_debug,
+            ocr_engine=cast(OcrEngineName, args.ocr_engine),
+            paddle_model=args.paddle_model,
+        )
     except OcrUnavailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

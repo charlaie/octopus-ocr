@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast
 
 from PIL import Image
 
@@ -18,6 +18,23 @@ class OcrUnavailableError(RuntimeError):
 class TesseractConfig(TypedDict):
     psm: str
     vars: NotRequired[dict[str, str]]
+
+
+OcrEngineName = Literal["tesseract", "paddle"]
+
+
+class OcrEngine(Protocol):
+    def assert_available(self) -> None: ...
+
+    def read_image(self, image: Image.Image, bbox: BBox, *, mode: str) -> OcrField: ...
+
+
+def create_ocr_engine(name: OcrEngineName, *, paddle_model: str = "en_PP-OCRv5_mobile_rec") -> OcrEngine:
+    if name == "tesseract":
+        return TesseractOcr()
+    if name == "paddle":
+        return PaddleOcr(model_name=paddle_model)
+    raise ValueError(f"Unsupported OCR engine: {name}")
 
 
 class TesseractOcr:
@@ -107,6 +124,78 @@ class TesseractOcr:
                 },
             }
         return {"psm": "6"}
+
+
+class PaddleOcr:
+    def __init__(self, *, model_name: str = "en_PP-OCRv5_mobile_rec", engine: str | None = None) -> None:
+        self.model_name = model_name
+        self.engine = engine
+        self._model: Any | None = None
+
+    def assert_available(self) -> None:
+        self._load_model()
+
+    def read_image(self, image: Image.Image, bbox: BBox, *, mode: str) -> OcrField:
+        model = self._load_model()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / f"{mode}.png"
+            image.save(image_path)
+            output = model.predict(input=str(image_path), batch_size=1)
+        text, confidence = _extract_paddle_text(output)
+        return OcrField(text=text, confidence=confidence, bbox=bbox)
+
+    def _load_model(self) -> Any:
+        if self._model is not None:
+            return self._model
+        try:
+            from paddleocr import TextRecognition
+        except ImportError as exc:
+            raise OcrUnavailableError(
+                "Could not import PaddleOCR. Install PaddlePaddle and PaddleOCR, then rerun with "
+                "'--ocr-engine paddle'. See README for the install commands."
+            ) from exc
+
+        kwargs: dict[str, Any] = {"model_name": self.model_name}
+        if self.engine is not None:
+            kwargs["engine"] = self.engine
+        try:
+            self._model = TextRecognition(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - dependency/model setup failures should be user-readable.
+            raise OcrUnavailableError(f"Could not initialize PaddleOCR model '{self.model_name}': {exc}") from exc
+        return self._model
+
+
+def _extract_paddle_text(output: Any) -> tuple[str, float | None]:
+    records = list(output) if isinstance(output, (list, tuple)) else [output]
+    texts: list[str] = []
+    scores: list[float] = []
+    for record in records:
+        data = _paddle_record_data(record)
+        text = data.get("rec_text")
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+        score = data.get("rec_score")
+        if isinstance(score, (int, float)):
+            scores.append(float(score) * 100)
+
+    confidence = round(sum(scores) / len(scores), 2) if scores else None
+    return " ".join(texts).strip(), confidence
+
+
+def _paddle_record_data(record: Any) -> dict[str, Any]:
+    if isinstance(record, dict):
+        value = record.get("res", record)
+        return value if isinstance(value, dict) else {}
+    res = getattr(record, "res", None)
+    if isinstance(res, dict):
+        return res
+    json_value = getattr(record, "json", None)
+    if callable(json_value):
+        value = json_value()
+        if isinstance(value, dict):
+            nested = value.get("res", value)
+            return cast(dict[str, Any], nested) if isinstance(nested, dict) else {}
+    return {}
 
 
 def _choose_amount_ocr_result(primary: OcrField, secondary: OcrField) -> OcrField:

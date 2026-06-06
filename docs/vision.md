@@ -8,7 +8,7 @@ This project intentionally uses a UI-specific vision pipeline for the current Oc
 - The transaction list has a stable structure: icon on the left, payee/date text in the middle, amount on the right.
 - Rows are detected from the icon column, not from OCR text. This avoids OCR deciding where a row starts or ends.
 - Category is visual data, not text data. We classify it from the icon color/shape before OCR.
-- OCR is only used for fields that must be read: payee, date/time, and amount.
+- The selected OCR engine is only used for fields that must be read: payee, date/time, and amount.
 
 ## Why Icon/Color Detection
 

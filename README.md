@@ -10,7 +10,7 @@ OCR Octopus transaction screenshots and export:
 
 ## Requirements
 
-This project is pinned to Python 3.12. Tesseract is a system dependency:
+This project is pinned to Python 3.12. Tesseract is the default OCR system dependency:
 
 ```bash
 brew install tesseract
@@ -22,11 +22,23 @@ Install Python dependencies with `uv`:
 uv sync --dev
 ```
 
+PaddleOCR is also supported for cleaner digital text recognition. Install it into the project environment when you want
+to run with `--ocr-engine paddle`:
+
+```bash
+uv pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+uv pip install "paddleocr[all]"
+```
+
+The default Paddle model is `en_PP-OCRv5_mobile_rec`, a small English/numeric PP-OCRv5 recognizer. PaddleOCR downloads
+model weights on first use; if Hugging Face is unavailable, set `PADDLE_PDX_MODEL_SOURCE=BOS`.
+
 ## Usage
 
 ```bash
 uv run octopus-ocr data/*.PNG --out out/
 uv run octopus-ocr data/screen-recording.mp4 --out out/ --video-sample-fps 5
+uv run octopus-ocr data/*.PNG --out out/ --ocr-engine paddle
 ```
 
 Inspect `out/review.csv` and `out/monthly_category_totals.csv` before importing `out/actual.ofx` into Actual Budget.
@@ -37,4 +49,6 @@ keyframe filtering; it does not mean every sampled frame is OCRed.
 
 ## Notes
 
-The pipeline detects transaction rows and categories from the screenshot layout, then runs Tesseract only on cropped payee/date/amount fields. Top-ups and fare subsidies are exported as inflows when their amount text is positive/green.
+The pipeline detects transaction rows and categories from the screenshot layout, then runs the selected OCR engine only on
+cropped payee/date/amount fields. Top-ups and fare subsidies are exported as inflows when their amount text is
+positive/green.

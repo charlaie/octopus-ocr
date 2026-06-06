@@ -37,8 +37,15 @@ def test_cli_expands_video_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
             relevant_frame_count=8,
         )
 
-    def fake_pipeline(image_paths, out_dir, *, write_debug=True):
-        calls["pipeline"] = (image_paths, out_dir, write_debug)
+    def fake_pipeline(
+        image_paths,
+        out_dir,
+        *,
+        write_debug=True,
+        ocr_engine="tesseract",
+        paddle_model="en_PP-OCRv5_mobile_rec",
+    ):
+        calls["pipeline"] = (image_paths, out_dir, write_debug, ocr_engine, paddle_model)
         return SimpleNamespace(candidates=[], transactions=[])
 
     monkeypatch.setattr("octopus_ocr.cli.extract_video_keyframes", fake_extract)
@@ -50,7 +57,13 @@ def test_cli_expands_video_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
 
     assert code == 0
     assert calls["extract"] == (video_path, out_dir / "frames" / "screen_recording", 3.0)
-    assert calls["pipeline"] == ([Path("data/1.PNG"), extracted_frame], out_dir, False)
+    assert calls["pipeline"] == (
+        [Path("data/1.PNG"), extracted_frame],
+        out_dir,
+        False,
+        "tesseract",
+        "en_PP-OCRv5_mobile_rec",
+    )
     assert "Extracted 1 keyframe(s)" in captured.out
     assert "Timings:" in captured.out
     assert "extract video keyframes (screen recording.mp4)" in captured.out
@@ -81,6 +94,43 @@ def test_cli_prints_pipeline_timings(monkeypatch, capsys) -> None:
     assert "1.50 s" in captured.out
     assert "total" in captured.out
     assert "1.75 s" in captured.out
+
+
+def test_cli_passes_paddle_ocr_options(monkeypatch, capsys) -> None:
+    calls = {}
+
+    def fake_pipeline(
+        image_paths,
+        out_dir,
+        *,
+        write_debug=True,
+        ocr_engine="tesseract",
+        paddle_model="en_PP-OCRv5_mobile_rec",
+    ):
+        calls["pipeline"] = (image_paths, out_dir, write_debug, ocr_engine, paddle_model)
+        return SimpleNamespace(candidates=[], transactions=[])
+
+    monkeypatch.setattr("octopus_ocr.cli.run_pipeline", fake_pipeline)
+
+    code = main(
+        [
+            "data/1.PNG",
+            "--ocr-engine",
+            "paddle",
+            "--paddle-model",
+            "PP-OCRv5_server_rec",
+        ]
+    )
+    capsys.readouterr()
+
+    assert code == 0
+    assert calls["pipeline"] == (
+        [Path("data/1.PNG")],
+        Path("out"),
+        True,
+        "paddle",
+        "PP-OCRv5_server_rec",
+    )
 
 
 def test_format_duration() -> None:

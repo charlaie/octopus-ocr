@@ -10,7 +10,7 @@ from octopus_ocr.dedupe import dedupe_candidates
 from octopus_ocr.exporters import write_json, write_monthly_category_csv, write_ofx, write_review_csv
 from octopus_ocr.models import BBox, OcrField, PipelineResult, ProcessTiming, TransactionCandidate
 from octopus_ocr.normalize import normalize_payee, parse_amount, parse_datetime
-from octopus_ocr.ocr import TesseractOcr
+from octopus_ocr.ocr import OcrEngine, OcrEngineName, create_ocr_engine
 from octopus_ocr.vision import annotate_rows, detect_rows, load_rgb, to_pil_crop
 
 
@@ -19,7 +19,9 @@ def run_pipeline(
     out_dir: Path,
     *,
     write_debug: bool = True,
-    ocr: TesseractOcr | None = None,
+    ocr: OcrEngine | None = None,
+    ocr_engine: OcrEngineName = "tesseract",
+    paddle_model: str = "en_PP-OCRv5_mobile_rec",
 ) -> PipelineResult:
     timer = _PipelineTimer()
     with timer.step("prepare output directories"):
@@ -29,9 +31,8 @@ def run_pipeline(
             debug_dir.mkdir(parents=True, exist_ok=True)
 
     with timer.step("initialize OCR engine"):
-        ocr_engine = ocr or TesseractOcr()
-        if hasattr(ocr_engine, "assert_available"):
-            ocr_engine.assert_available()
+        engine = ocr or create_ocr_engine(ocr_engine, paddle_model=paddle_model)
+        engine.assert_available()
     candidates: list[TransactionCandidate] = []
     for image_path in image_paths:
         with timer.step("load images"):
@@ -43,7 +44,7 @@ def run_pipeline(
                 annotate_rows(image_rgb, rows).save(debug_dir / f"{image_path.stem}_annotated.png")
         for row_index, row in enumerate(rows):
             with timer.step("OCR rows"):
-                candidate = _read_row(image_rgb, image_path, row_index, row, ocr_engine, debug_dir if write_debug else None)
+                candidate = _read_row(image_rgb, image_path, row_index, row, engine, debug_dir if write_debug else None)
             candidates.append(candidate)
 
     with timer.step("dedupe transactions"):
@@ -72,7 +73,7 @@ def _read_row(
     image_path: Path,
     row_index: int,
     row,
-    ocr_engine: TesseractOcr,
+    ocr_engine: OcrEngine,
     debug_dir: Path | None,
 ) -> TransactionCandidate:
     warnings: list[str] = []
