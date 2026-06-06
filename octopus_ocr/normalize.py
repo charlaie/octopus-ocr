@@ -47,7 +47,7 @@ def parse_datetime(text: str) -> datetime | None:
     cleaned = text.strip()
     cleaned = cleaned.replace(".", "-").replace("/", "-")
     cleaned = re.sub(r"\s+", " ", cleaned)
-    match = re.search(r"(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2})", cleaned)
+    match = re.search(r"(\d{4}-\d{1,2}-\d{1,2})\s*(\d{1,2}:\d{2})", cleaned)
     if not match:
         return None
     try:
