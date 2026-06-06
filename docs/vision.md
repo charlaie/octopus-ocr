@@ -8,7 +8,8 @@ This project intentionally uses a UI-specific vision pipeline for the current Oc
 - The transaction list has a stable structure: icon on the left, payee/date text in the middle, amount on the right.
 - Rows are detected from the icon column, not from OCR text. This avoids OCR deciding where a row starts or ends.
 - Category is visual data, not text data. We classify it from the icon color/shape before OCR.
-- The selected OCR engine is only used for fields that must be read: payee, date/time, and amount.
+- OCR is only used for fields that must be read: payee, date/time, and amount. Tesseract reads field crops directly;
+  Paddle reads whole row crops with its OCR pipeline and maps detected text boxes back to those fields.
 
 ## Why Icon/Color Detection
 
@@ -93,3 +94,18 @@ Annotated screenshots and field crops are part of the pipeline on purpose. They 
 - or OCR misreading a good crop.
 
 When the app UI changes, inspect `out/debug/*_annotated.png` before changing OCR settings.
+
+## Paddle Row OCR
+
+The Paddle backend uses PaddleOCR's general OCR pipeline, not the text-recognition module alone. The app-specific row
+detector still decides which transaction rows exist, then Paddle detects and recognizes text inside each row crop.
+
+Detected Paddle boxes are assigned back to the existing field boxes by geometry:
+
+- text intersecting the payee box is joined top-to-bottom as the payee,
+- text intersecting the date/time box becomes the datetime field,
+- text intersecting the right-side amount box becomes the amount field,
+- icon text and other stray detections are ignored when they do not overlap these field boxes.
+
+This avoids feeding a single-line recognizer oversized or multiline payee crops, which caused failures such as
+`PARKnSHOP` being read as `nn` and `PAPER AND COFFEE LIMITED` being compressed into a bad single-line read.

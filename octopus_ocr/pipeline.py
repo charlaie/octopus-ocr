@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Iterator
+from typing import Any, Callable, Iterator, cast
 
 from octopus_ocr.dedupe import dedupe_candidates
 from octopus_ocr.exporters import write_json, write_monthly_category_csv, write_ofx, write_review_csv
@@ -78,14 +78,33 @@ def _read_row(
 ) -> TransactionCandidate:
     warnings: list[str] = []
     fields: dict[str, OcrField] = {}
-    for name, bbox, mode in [
+    field_specs = [
         ("payee", row.payee_bbox, "payee"),
         ("datetime", row.datetime_bbox, "datetime"),
         ("amount", row.amount_bbox, "amount"),
-    ]:
+    ]
+    for name, bbox, _mode in field_specs:
         crop = to_pil_crop(image_rgb, bbox)
         if debug_dir:
             crop.save(debug_dir / f"{image_path.stem}_{row_index:02d}_{name}.png")
+
+    read_row_fields = getattr(ocr_engine, "read_row_fields", None)
+    if callable(read_row_fields):
+        try:
+            row_crop = to_pil_crop(image_rgb, row.row_bbox)
+            row_reader = cast(Callable[[Any, BBox, dict[str, BBox]], dict[str, OcrField]], read_row_fields)
+            fields = row_reader(
+                row_crop,
+                row.row_bbox,
+                {name: bbox for name, bbox, _mode in field_specs},
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve partial row evidence for review.
+            warnings.append(f"row OCR failed: {exc}")
+
+    for name, bbox, mode in field_specs:
+        if name in fields:
+            continue
+        crop = to_pil_crop(image_rgb, bbox)
         try:
             fields[name] = ocr_engine.read_image(crop, bbox, mode=mode)
         except Exception as exc:  # noqa: BLE001 - preserve partial row evidence for review.

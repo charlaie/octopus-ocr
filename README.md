@@ -30,8 +30,10 @@ uv pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/s
 uv pip install "paddleocr[all]"
 ```
 
-The default Paddle model is `en_PP-OCRv5_mobile_rec`, a small English/numeric PP-OCRv5 recognizer. PaddleOCR downloads
-model weights on first use; if Hugging Face is unavailable, set `PADDLE_PDX_MODEL_SOURCE=BOS`.
+The default Paddle recognition model is `en_PP-OCRv5_mobile_rec`, a small English/numeric PP-OCRv5 recognizer. Paddle
+mode runs Paddle's detection + recognition pipeline on each detected transaction row, then maps detected text boxes back
+to payee, date/time, and amount fields. PaddleOCR downloads model weights on first use; if Hugging Face is unavailable,
+set `PADDLE_PDX_MODEL_SOURCE=BOS`.
 
 ## Usage
 
@@ -49,6 +51,6 @@ keyframe filtering; it does not mean every sampled frame is OCRed.
 
 ## Notes
 
-The pipeline detects transaction rows and categories from the screenshot layout, then runs the selected OCR engine only on
-cropped payee/date/amount fields. Top-ups and fare subsidies are exported as inflows when their amount text is
-positive/green.
+The pipeline detects transaction rows and categories from the screenshot layout. Tesseract runs on cropped
+payee/date/amount fields; Paddle runs on whole row crops and maps detected text boxes back to those fields. Top-ups and
+fare subsidies are exported as inflows when their amount text is positive/green.

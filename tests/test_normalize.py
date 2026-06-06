@@ -25,11 +25,29 @@ def test_parse_datetime_requires_octopus_format() -> None:
     assert parse_datetime("May 28") is None
 
 
+def test_parse_datetime_accepts_ocr_joined_date_and_time() -> None:
+    parsed = parse_datetime("2026-06-0319:06")
+    assert parsed is not None
+    assert parsed.year == 2026
+    assert parsed.month == 6
+    assert parsed.day == 3
+    assert parsed.hour == 19
+    assert parsed.minute == 6
+
+
 def test_canonical_key_normalizes_payee_spacing_and_case() -> None:
     when = parse_datetime("2026-05-28 19:06")
     assert when is not None
     key_a = canonical_key(" Yummy\nCat Street Food ", when, Decimal("-10.0"), "eat and drink", "outflow")
     key_b = canonical_key("yummy cat street food", when, Decimal("-10.0"), "eat and drink", "outflow")
+    assert key_a == key_b
+
+
+def test_canonical_key_normalizes_slash_spacing() -> None:
+    when = parse_datetime("2026-05-28 09:28")
+    assert when is not None
+    key_a = canonical_key("KMB / LWB", when, Decimal("-8.6"), "transport", "outflow")
+    key_b = canonical_key("KMB /LWB", when, Decimal("-8.6"), "transport", "outflow")
     assert key_a == key_b
 
 
@@ -40,3 +58,7 @@ def test_stable_id_is_deterministic() -> None:
 
 def test_normalize_payee_collapses_lines() -> None:
     assert normalize_payee("PAPER AND\nCOFFEE LIMITED") == "PAPER AND COFFEE LIMITED"
+
+
+def test_normalize_payee_canonicalizes_slash_spacing() -> None:
+    assert normalize_payee("KMB /LWB") == "KMB / LWB"

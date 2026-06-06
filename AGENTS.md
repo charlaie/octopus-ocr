@@ -1,0 +1,1 @@
+- Always use `uv` for the python environment

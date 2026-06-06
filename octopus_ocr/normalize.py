@@ -15,6 +15,7 @@ HONG_KONG_TZ = "Asia/Hong_Kong"
 def normalize_payee(text: str) -> str:
     text = text.replace("\n", " ")
     text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*/\s*", " / ", text)
     return text.strip(" -\t")
 
 
