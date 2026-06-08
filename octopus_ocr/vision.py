@@ -51,7 +51,7 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
 
     icon_x_min = int(55 * sx)
     icon_x_max = int(175 * sx)
-    content_top = int(245 * sy)
+    content_top = int(272 * sy)
     content_bottom = height - int(95 * sy)
 
     icons = _detect_icon_blobs(image_rgb, icon_x_min, icon_x_max, content_top, content_bottom)
@@ -59,11 +59,14 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
     for index, (cx, cy, radius, category) in enumerate(icons):
         prev_cy = icons[index - 1][1] if index > 0 else None
         next_cy = icons[index + 1][1] if index < len(icons) - 1 else None
-        row_top = (
-            int((prev_cy + cy) / 2)
-            if prev_cy is not None
-            else max(content_top, int(cy - max(95 * sy, radius * 1.7)))
-        )
+        if prev_cy is not None:
+            row_top = int((prev_cy + cy) / 2)
+        elif next_cy is not None:
+            row_top = int(cy - (next_cy - cy) / 2)
+        else:
+            row_top = int(cy - max(95 * sy, radius * 1.7))
+        if prev_cy is None and row_top >= content_top - int(20 * sy):
+            row_top = max(content_top, row_top)
         row_bottom = (
             int((cy + next_cy) / 2)
             if next_cy is not None
@@ -74,8 +77,6 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
 
         row_bbox = BBox(x=int(40 * sx), y=row_top, width=int(1060 * sx), height=row_bottom - row_top)
         payee_bbox, datetime_bbox = _detect_text_field_bboxes(image_rgb, row_bbox, sx, sy, cy)
-        if _is_top_clipped_first_row(prev_cy, row_top, content_top, payee_bbox, sy):
-            continue
         amount_bbox = BBox(
             x=int(850 * sx),
             y=max(row_top, int(cy - 45 * sy)),
@@ -99,20 +100,6 @@ def detect_rows(image_rgb: np.ndarray) -> list[RowRegion]:
             )
         )
     return rows
-
-
-def _is_top_clipped_first_row(
-    prev_cy: int | None,
-    row_top: int,
-    content_top: int,
-    payee_bbox: BBox,
-    sy: float,
-) -> bool:
-    if prev_cy is not None:
-        return False
-    if row_top > content_top + int(4 * sy):
-        return False
-    return payee_bbox.y - row_top < int(30 * sy)
 
 
 def detect_amount_direction(image_rgb: np.ndarray, bbox: BBox) -> Direction | None:

@@ -57,6 +57,28 @@ def test_top_clipped_first_row_is_skipped() -> None:
     assert [row.category for row in rows] == ["transport"]
 
 
+def test_first_row_header_text_is_not_part_of_payee_bbox() -> None:
+    image_rgb = np.full((REFERENCE_HEIGHT, REFERENCE_WIDTH, 3), 255, dtype=np.uint8)
+
+    cv2.rectangle(image_rgb, (420, 226), (760, 248), (95, 95, 95), -1)
+    cv2.circle(image_rgb, (115, 361), 48, (50, 175, 230), -1)
+    cv2.rectangle(image_rgb, (205, 318), (650, 354), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 385), (485, 412), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 317), (1010, 397), (190, 0, 0), -1)
+
+    cv2.circle(image_rgb, (115, 571), 48, (50, 175, 230), -1)
+    cv2.rectangle(image_rgb, (205, 520), (650, 555), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 590), (485, 617), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 526), (1010, 606), (190, 0, 0), -1)
+
+    rows = detect_rows(image_rgb)
+
+    assert rows[0].row_bbox.y == 272
+    assert rows[0].payee_bbox.y >= 300
+    assert rows[0].payee_bbox.height <= 70
+    assert rows[0].datetime_bbox.y > rows[0].payee_bbox.y + rows[0].payee_bbox.height
+
+
 def test_small_top_up_logo_fragment_creates_own_row() -> None:
     image_rgb = np.full((REFERENCE_HEIGHT, REFERENCE_WIDTH, 3), 255, dtype=np.uint8)
 

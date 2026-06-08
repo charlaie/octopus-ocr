@@ -426,6 +426,8 @@ def _choose_amount_ocr_result(primary: OcrField, secondary: OcrField) -> OcrFiel
     if primary_digits == secondary_digits:
         return primary
     if len(primary_digits) != len(secondary_digits):
+        if _secondary_preserves_primary_suffix(primary, secondary, primary_digits, secondary_digits):
+            return _format_secondary_amount(primary.text, secondary)
         return primary
     if primary.confidence is None or secondary.confidence is None:
         return primary
@@ -452,6 +454,19 @@ def _digits(text: str) -> str:
 def _primary_is_missing_integer_digits(primary: OcrField) -> bool:
     text = primary.text.replace("−", "-").replace(" ", "")
     return bool(re.search(r"^[+-]?\.\d+$", text))
+
+
+def _secondary_preserves_primary_suffix(
+    primary: OcrField,
+    secondary: OcrField,
+    primary_digits: str,
+    secondary_digits: str,
+) -> bool:
+    if not primary_digits or not secondary_digits.endswith(primary_digits):
+        return False
+    if primary.confidence is None or secondary.confidence is None:
+        return False
+    return primary.confidence <= 20 and secondary.confidence >= primary.confidence + 20
 
 
 def _primary_decimal_places(text: str) -> int | None:

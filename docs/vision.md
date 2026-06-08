@@ -32,7 +32,7 @@ The fare subsidy badge is intentionally detected from its dark plus glyph instea
 These constants come from the current `1170x2532` screenshots:
 
 - `icon_x_min = 55`, `icon_x_max = 175`: limits detection to the left icon column.
-- `content_top = 245`: skips the iOS status bar and Octopus header.
+- `content_top = 272`: fixed-height Octopus header boundary; transaction rows must begin under this line.
 - `content_bottom = height - 95`: avoids the home indicator area.
 - `row_bbox.x = 40`, `row_bbox.width = 1060`: covers the visible transaction row area.
 - `text_x = 205`: left edge of payee/date text.
@@ -47,7 +47,9 @@ If the Octopus app changes spacing, these are the first values to revisit.
 Row boundaries are based on neighboring icon centers:
 
 - Middle rows use the midpoint between previous/current/next icon centers.
-- First and last rows fall back to an icon-relative height so clipped edge rows do not absorb unrelated content.
+- First rows are estimated from the next row when possible, then checked against `content_top`; rows clipped by the
+  header are skipped, while small estimation jitter is clamped to the header boundary.
+- Last rows fall back to an icon-relative height so clipped edge rows do not absorb unrelated content.
 - Rows shorter than about `170px` at the reference scale are skipped as likely clipped/incomplete.
 
 This is why multiline rows work: a taller gap between icon centers creates a taller row, rather than forcing every row into the old fixed `~200px` shape.

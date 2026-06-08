@@ -31,6 +31,17 @@ def test_amount_ocr_uses_secondary_when_primary_loses_integer_digits() -> None:
     assert result.confidence == 44.49
 
 
+def test_amount_ocr_uses_secondary_when_primary_drops_leading_digit() -> None:
+    bbox = BBox(x=0, y=0, width=100, height=50)
+    primary = OcrField(text="-4.0", confidence=0.0, bbox=bbox)
+    secondary = OcrField(text="-74.0", confidence=91.57, bbox=bbox)
+
+    result = _choose_amount_ocr_result(primary, secondary)
+
+    assert result.text == "-74.0"
+    assert result.confidence == 91.57
+
+
 def test_amount_ocr_keeps_high_confidence_primary_read() -> None:
     bbox = BBox(x=0, y=0, width=100, height=50)
     primary = OcrField(text="-4.9", confidence=88.54, bbox=bbox)
