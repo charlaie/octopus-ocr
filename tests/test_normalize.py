@@ -63,3 +63,12 @@ def test_normalize_payee_collapses_lines() -> None:
 
 def test_normalize_payee_canonicalizes_slash_spacing() -> None:
     assert normalize_payee("KMB /LWB") == "KMB / LWB"
+
+
+def test_normalize_payee_canonicalizes_known_merchant_ocr_variants() -> None:
+    assert normalize_payee("PARKNSHOP") == "PARKnSHOP"
+    assert normalize_payee("park 1 shop") == "PARKnSHOP"
+    assert normalize_payee("city Super") == "city'super"
+    assert normalize_payee("city5super") == "city'super"
+    assert normalize_payee("Nana-musubl") == "Hana-Musubi"
+    assert normalize_payee("hana musubi") == "Hana-Musubi"

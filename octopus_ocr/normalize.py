@@ -16,7 +16,18 @@ def normalize_payee(text: str) -> str:
     text = text.replace("\n", " ")
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s*/\s*", " / ", text)
-    return text.strip(" -\t")
+    text = text.strip(" -\t")
+    return _canonicalize_known_payee(text)
+
+
+def _canonicalize_known_payee(text: str) -> str:
+    if re.fullmatch(r"park[\s\d_'\-]*n?[\s\d_'\-]*shop", text, flags=re.IGNORECASE):
+        return "PARKnSHOP"
+    if re.fullmatch(r"city[\s\d_'\-]*super", text, flags=re.IGNORECASE):
+        return "city'super"
+    if re.fullmatch(r"[hn]ana[\s\d_'\-]*musub[i1l]", text, flags=re.IGNORECASE):
+        return "Hana-Musubi"
+    return text
 
 
 def parse_amount(text: str) -> tuple[Decimal | None, Direction | None]:
