@@ -23,7 +23,7 @@ def parse_amount(text: str) -> tuple[Decimal | None, Direction | None]:
     cleaned = text.strip()
     cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
     cleaned = cleaned.replace(",", "").replace("HK$", "").replace("$", "")
-    match = re.search(r"([+-]?\s*\d+(?:\.\d+)?)", cleaned)
+    match = re.search(r"([+-]?\s*(?:\d+(?:\.\d+)?|\.\d+))", cleaned)
     if not match:
         return None, None
 
@@ -32,6 +32,8 @@ def parse_amount(text: str) -> tuple[Decimal | None, Direction | None]:
     if value_text[:1] in {"+", "-"}:
         sign = value_text[0]
         value_text = value_text[1:]
+    if value_text.startswith("."):
+        value_text = f"0{value_text}"
     if "." not in value_text and len(value_text) >= 2:
         value_text = f"{value_text[:-1]}.{value_text[-1]}"
     value_text = f"{sign}{value_text}"

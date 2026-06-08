@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from PIL import Image
 
 from octopus_ocr.models import BBox, OcrField
-from octopus_ocr.ocr import PaddleOcr, _choose_amount_ocr_result
+from octopus_ocr.ocr import PaddleOcr, _choose_amount_ocr_result, _trim_ocr_whitespace
 
 
 def test_amount_ocr_uses_higher_confidence_digit_read_when_primary_is_weak() -> None:
@@ -18,6 +18,17 @@ def test_amount_ocr_uses_higher_confidence_digit_read_when_primary_is_weak() -> 
 
     assert result.text == "-7.9"
     assert result.confidence == 47.82
+
+
+def test_amount_ocr_uses_secondary_when_primary_loses_integer_digits() -> None:
+    bbox = BBox(x=0, y=0, width=100, height=50)
+    primary = OcrField(text="-.4", confidence=0.0, bbox=bbox)
+    secondary = OcrField(text="-74", confidence=44.49, bbox=bbox)
+
+    result = _choose_amount_ocr_result(primary, secondary)
+
+    assert result.text == "-7.4"
+    assert result.confidence == 44.49
 
 
 def test_amount_ocr_keeps_high_confidence_primary_read() -> None:
@@ -41,6 +52,18 @@ def test_amount_ocr_ignores_incomplete_secondary_read() -> None:
     assert result.text == "-4.9"
 
 
+def test_trim_ocr_whitespace_keeps_text_padding() -> None:
+    image = Image.new("RGB", (100, 50), "white")
+    for y in range(20, 31):
+        for x in range(60, 71):
+            image.putpixel((x, y), (190, 0, 0))
+
+    trimmed = _trim_ocr_whitespace(image, padding=5)
+
+    assert trimmed.size == (21, 21)
+    assert trimmed.getpixel((5, 5)) == (190, 0, 0)
+
+
 def test_paddle_ocr_reads_text_recognition_result(monkeypatch) -> None:
     calls = {}
 
@@ -62,6 +85,7 @@ def test_paddle_ocr_reads_text_recognition_result(monkeypatch) -> None:
     )
 
     assert calls["init"] == {
+        "text_detection_model_name": "PP-OCRv5_mobile_det",
         "text_recognition_model_name": "en_PP-OCRv5_mobile_rec",
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,

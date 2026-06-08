@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import shutil
 import subprocess
 import tempfile
@@ -61,7 +62,7 @@ class TesseractOcr:
         with tempfile.TemporaryDirectory() as tmpdir:
             image_path = Path(tmpdir) / "crop.png"
             output_base = Path(tmpdir) / "out"
-            image.save(image_path)
+            _trim_ocr_whitespace(image).save(image_path)
             if mode == "amount":
                 primary = self._read_tsv_stdout(image_path, bbox, config)
                 secondary = self._read_tsv_stdout(
@@ -132,6 +133,39 @@ class TesseractOcr:
                 },
             }
         return {"psm": "6"}
+
+
+def _trim_ocr_whitespace(image: Image.Image, *, padding: int = 12, threshold: int = 245) -> Image.Image:
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    pixels = rgb.load()
+    assert pixels is not None
+    left = width
+    top = height
+    right = -1
+    bottom = -1
+    for y in range(height):
+        for x in range(width):
+            red, green, blue = cast(tuple[int, int, int], pixels[x, y])
+            if min(red, green, blue) >= threshold:
+                continue
+            left = min(left, x)
+            top = min(top, y)
+            right = max(right, x)
+            bottom = max(bottom, y)
+
+    if right < left or bottom < top:
+        return image
+
+    crop_box = (
+        max(0, left - padding),
+        max(0, top - padding),
+        min(width, right + padding + 1),
+        min(height, bottom + padding + 1),
+    )
+    if crop_box == (0, 0, width, height):
+        return image
+    return image.crop(crop_box)
 
 
 class PaddleOcr:
@@ -384,6 +418,11 @@ def _choose_amount_ocr_result(primary: OcrField, secondary: OcrField) -> OcrFiel
         return primary
     if not primary_digits:
         return _format_secondary_amount(primary.text, secondary)
+    if _primary_is_missing_integer_digits(primary) and len(secondary_digits) > len(primary_digits):
+        if primary.confidence is None or secondary.confidence is None:
+            return primary
+        if primary.confidence <= 20 and secondary.confidence >= primary.confidence + 20:
+            return _format_secondary_amount(primary.text, secondary)
     if primary_digits == secondary_digits:
         return primary
     if len(primary_digits) != len(secondary_digits):
@@ -408,6 +447,11 @@ def _format_secondary_amount(primary_text: str, secondary: OcrField) -> OcrField
 
 def _digits(text: str) -> str:
     return "".join(char for char in text if char.isdigit())
+
+
+def _primary_is_missing_integer_digits(primary: OcrField) -> bool:
+    text = primary.text.replace("−", "-").replace(" ", "")
+    return bool(re.search(r"^[+-]?\.\d+$", text))
 
 
 def _primary_decimal_places(text: str) -> int | None:
