@@ -61,13 +61,27 @@ def test_make_dev_app_writes_launcher_bundle(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     app_path = tmp_path / "Octopus OCR.app"
+    rendered_sizes: list[int] = []
+    rendered_sources: list[Path] = []
 
-    make_dev_app(app_path, repo_root=repo_root)
+    def fake_icon_renderer(svg_path: Path, size: int) -> bytes:
+        rendered_sources.append(svg_path)
+        rendered_sizes.append(size)
+        return b"fake-png"
+
+    make_dev_app(app_path, repo_root=repo_root, icon_renderer=fake_icon_renderer)
 
     launcher = app_path / "Contents" / "MacOS" / "Octopus OCR"
     info = app_path / "Contents" / "Info.plist"
+    icon = app_path / "Contents" / "Resources" / "AppIcon.icns"
+    svg = app_path / "Contents" / "Resources" / "OctopusOCR.svg"
     assert launcher.exists()
     assert info.exists()
+    assert icon.read_bytes().startswith(b"icns")
+    assert "<svg" in svg.read_text(encoding="utf-8")
+    assert "<key>CFBundleIconFile</key>" in info.read_text(encoding="utf-8")
+    assert rendered_sizes == [16, 32, 64, 128, 256, 512, 1024]
+    assert all(path.name == "octopus_ocr_icon.svg" for path in rendered_sources)
     assert "uv run octopus-ocr-gui" in launcher.read_text(encoding="utf-8")
     assert str(repo_root) in launcher.read_text(encoding="utf-8")
     assert launcher.stat().st_mode & 0o111

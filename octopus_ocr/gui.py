@@ -398,6 +398,13 @@ _HTML = r"""
       color: var(--muted);
     }
 
+    .elapsed {
+      margin-top: 2px;
+      min-height: 20px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
     .error {
       margin-top: 10px;
       color: var(--warn);
@@ -513,6 +520,7 @@ _HTML = r"""
         <div class="progress-panel">
           <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
           <div class="status" id="status">Ready.</div>
+          <div class="elapsed" id="elapsed">Elapsed: 0.0s</div>
           <div class="error" id="error"></div>
           <div class="results" id="results">
             <div class="summary">
@@ -534,12 +542,13 @@ _HTML = r"""
   </main>
 
   <script>
-    const state = { running: false, count: 0 };
+    const state = { running: false, count: 0, startedAt: null, elapsedTimer: null };
     const list = document.getElementById('input-list');
     const title = document.getElementById('input-title');
     const runButton = document.getElementById('run');
     const fill = document.getElementById('progress-fill');
     const statusEl = document.getElementById('status');
+    const elapsedEl = document.getElementById('elapsed');
     const errorEl = document.getElementById('error');
     const resultsEl = document.getElementById('results');
 
@@ -582,6 +591,38 @@ _HTML = r"""
       return 4;
     }
 
+    function formatElapsed(seconds) {
+      if (seconds < 60) return `${seconds.toFixed(1)}s`;
+      const minutes = Math.floor(seconds / 60);
+      const remaining = seconds - minutes * 60;
+      return `${minutes}m ${remaining.toFixed(1).padStart(4, '0')}s`;
+    }
+
+    function setElapsed(seconds) {
+      elapsedEl.textContent = `Elapsed: ${formatElapsed(seconds)}`;
+    }
+
+    function updateElapsed() {
+      if (!state.startedAt) return;
+      setElapsed((Date.now() - state.startedAt) / 1000);
+    }
+
+    function stopElapsedTimer(finalSeconds = null) {
+      if (state.elapsedTimer) {
+        window.clearInterval(state.elapsedTimer);
+        state.elapsedTimer = null;
+      }
+      if (finalSeconds !== null) setElapsed(finalSeconds);
+      state.startedAt = null;
+    }
+
+    function startElapsedTimer() {
+      stopElapsedTimer();
+      state.startedAt = Date.now();
+      setElapsed(0);
+      state.elapsedTimer = window.setInterval(updateElapsed, 250);
+    }
+
     window.OctopusOCR = {
       onInputsChanged(payload) {
         renderInputs(payload);
@@ -592,6 +633,7 @@ _HTML = r"""
         resultsEl.classList.remove('visible');
         fill.style.width = '2%';
         statusEl.textContent = payload.message || 'Starting OCR';
+        startElapsedTimer();
       },
       onProgress(event) {
         fill.style.width = `${progressPercent(event)}%`;
@@ -599,6 +641,7 @@ _HTML = r"""
       },
       onRunComplete(result) {
         setRunning(false);
+        stopElapsedTimer(result.total_seconds);
         fill.style.width = '100%';
         statusEl.textContent = `Complete in ${result.total_seconds.toFixed(2)}s. Output: ${result.output_dir}`;
         document.getElementById('rows').textContent = result.detected_rows;
@@ -608,6 +651,7 @@ _HTML = r"""
       },
       onRunError(payload) {
         setRunning(false);
+        stopElapsedTimer();
         statusEl.textContent = 'Run failed.';
         errorEl.textContent = payload.message || 'Unknown error.';
       }
@@ -623,6 +667,7 @@ _HTML = r"""
       window.pywebview.api.clear_inputs().then(renderInputs);
       fill.style.width = '0%';
       statusEl.textContent = 'Ready.';
+      stopElapsedTimer(0);
       errorEl.textContent = '';
       resultsEl.classList.remove('visible');
     });

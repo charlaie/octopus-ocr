@@ -23,6 +23,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["octopus_ocr"]
+artifacts = ["octopus_ocr/assets/*.svg"]
 
 [dependency-groups]
 dev = [
