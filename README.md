@@ -45,6 +45,25 @@ uv run octopus-ocr data/*.PNG --out out/ --ocr-engine paddle
 
 Inspect `out/review.csv` and `out/monthly_category_totals.csv` before importing `out/actual.ofx` into Actual Budget.
 
+## Local GUI
+
+Launch the drag-and-drop macOS GUI with:
+
+```bash
+uv run octopus-ocr-gui
+```
+
+The GUI accepts screenshots, screen recordings, and folders. It writes each run to a timestamped folder under
+`out/gui-runs/` and shows image/row progress while OCR is running.
+
+To create a local double-clickable app launcher:
+
+```bash
+uv run octopus-ocr-make-app
+```
+
+This writes `dist/Octopus OCR.app`, which launches the GUI from this checkout with `uv`.
+
 Video input is treated as a screenshot source: the CLI samples the recording, keeps coverage-based keyframes in
 `out/frames/`, and then runs the same screenshot OCR pipeline. `--video-sample-fps` controls video sampling before
 keyframe filtering; it does not mean every sampled frame is OCRed.

@@ -52,6 +52,62 @@ def test_pipeline_returns_step_timings(monkeypatch, tmp_path: Path) -> None:
     assert all(timing.seconds >= 0 for timing in result.timings)
 
 
+def test_pipeline_reports_detection_and_row_progress(monkeypatch, tmp_path: Path) -> None:
+    class AvailableOcr(TesseractOcr):
+        values = {
+            "payee": "MTR",
+            "datetime": "2026-05-16 21:46",
+            "amount": "-12.0",
+        }
+
+        def assert_available(self) -> None:
+            return None
+
+        def read_image(self, image, bbox: BBox, *, mode: str) -> OcrField:
+            return OcrField(text=self.values[mode], confidence=99.0, bbox=bbox)
+
+    row = SimpleNamespace(
+        row_bbox=BBox(x=40, y=990, width=1060, height=209),
+        icon_bbox=BBox(x=72, y=1047, width=96, height=96),
+        category="transport",
+        payee_bbox=BBox(x=205, y=1040, width=650, height=56),
+        datetime_bbox=BBox(x=205, y=1107, width=430, height=47),
+        amount_bbox=BBox(x=850, y=1050, width=215, height=80),
+        amount_direction="outflow",
+    )
+    detect_calls = {"count": 0}
+
+    def fake_detect_rows(image):
+        detect_calls["count"] += 1
+        return [row] if detect_calls["count"] == 1 else [row, row]
+
+    events = []
+    monkeypatch.setattr("octopus_ocr.pipeline.load_rgb", lambda path: object())
+    monkeypatch.setattr("octopus_ocr.pipeline.detect_rows", fake_detect_rows)
+    monkeypatch.setattr("octopus_ocr.pipeline.to_pil_crop", lambda image, bbox: object())
+    monkeypatch.setattr("octopus_ocr.pipeline.dedupe_candidates", lambda candidates: [])
+
+    run_pipeline(
+        [Path("image-1.png"), Path("image-2.png")],
+        tmp_path,
+        write_debug=False,
+        ocr=AvailableOcr(),
+        progress=events.append,
+    )
+
+    assert [event.message for event in events if event.phase == "detect"] == [
+        "Detecting image 1/2",
+        "Detecting image 2/2",
+        "Detected 3 row(s) across 2 image(s)",
+    ]
+    completed_row_events = [
+        event for event in events if event.phase == "ocr" and event.completed_rows > 0
+    ]
+    assert completed_row_events[-1].completed_rows == 3
+    assert completed_row_events[-1].total_rows == 3
+    assert events[-1].phase == "complete"
+
+
 def test_pipeline_exports_fare_subsidy_as_inflow(monkeypatch, tmp_path: Path) -> None:
     class AvailableOcr(TesseractOcr):
         values = {

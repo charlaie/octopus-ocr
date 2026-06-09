@@ -7,12 +7,15 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "opencv-python>=4.10.0",
     "pillow>=10.4.0",
+    "pywebview>=5.0",
     "pydantic>=2.8.0",
     "python-dateutil>=2.9.0",
 ]
 
 [project.scripts]
 octopus-ocr = "octopus_ocr.cli:main"
+octopus-ocr-gui = "octopus_ocr.gui:main"
+octopus-ocr-make-app = "octopus_ocr.app_bundle:main"
 
 [build-system]
 requires = ["hatchling"]
