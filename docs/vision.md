@@ -36,7 +36,7 @@ These constants come from the current `1170x2532` screenshots:
 - `content_bottom = height - 95`: avoids the home indicator area.
 - `row_bbox.x = 40`, `row_bbox.width = 1060`: covers the visible transaction row area.
 - `text_x = 205`: left edge of payee/date text.
-- `payee_width = 650`: wide enough for long payees like `PAPER AND COFFEE LIMITED`, but still stops before the amount column.
+- `payee_width = 675`: wide enough for long payees like `PAPER AND COFFEE LIMITED`, while still stopping before the amount text.
 - `date_width = 430`: date/time strings are shorter and should not include right-side amount text.
 - `amount_bbox.x = 850`, `amount_bbox.width = 215`: isolates the right-aligned amount.
 

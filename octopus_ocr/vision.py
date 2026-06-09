@@ -131,7 +131,7 @@ def _detect_text_field_bboxes(
     cy: int,
 ) -> tuple[BBox, BBox]:
     text_x = int(205 * sx)
-    payee_width = int(650 * sx)
+    payee_width = int(675 * sx)
     date_width = int(430 * sx)
     y_padding = int(10 * sy)
     line_runs = _detect_text_line_runs(
@@ -332,7 +332,7 @@ def _detect_fare_subsidy_icons(
     icon_x_min: int,
     content_top: int,
 ) -> list[tuple[int, int, float, Category]]:
-    dark_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([179, 80, 95]))
+    dark_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([179, 80, 150]))
     dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 

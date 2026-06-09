@@ -40,6 +40,33 @@ def test_fare_subsidy_plus_icon_creates_own_row() -> None:
     assert following.row_bbox.y >= subsidy.row_bbox.y + subsidy.row_bbox.height
 
 
+def test_faint_fare_subsidy_plus_icon_creates_own_row() -> None:
+    image_rgb = np.full((REFERENCE_HEIGHT, REFERENCE_WIDTH, 3), 255, dtype=np.uint8)
+
+    cv2.circle(image_rgb, (115, 475), 48, (50, 175, 230), -1)
+    cv2.rectangle(image_rgb, (205, 450), (650, 475), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 520), (485, 545), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 455), (1010, 500), (190, 0, 0), -1)
+
+    cv2.circle(image_rgb, (115, 675), 48, (248, 248, 252), -1)
+    cv2.line(image_rgb, (101, 675), (129, 675), (130, 130, 130), 6, cv2.LINE_AA)
+    cv2.line(image_rgb, (115, 661), (115, 689), (130, 130, 130), 6, cv2.LINE_AA)
+    cv2.rectangle(image_rgb, (205, 650), (650, 675), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 720), (485, 745), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 655), (1010, 700), (30, 145, 30), -1)
+
+    cv2.circle(image_rgb, (115, 880), 48, (50, 175, 230), -1)
+    cv2.rectangle(image_rgb, (205, 855), (650, 880), (30, 30, 30), -1)
+    cv2.rectangle(image_rgb, (205, 925), (485, 950), (95, 95, 95), -1)
+    cv2.rectangle(image_rgb, (900, 860), (1010, 905), (190, 0, 0), -1)
+
+    rows = detect_rows(image_rgb)
+
+    assert [row.category for row in rows] == ["transport", "fare subsidy", "transport"]
+    assert rows[1].amount_direction == "inflow"
+    assert rows[2].row_bbox.y >= rows[1].row_bbox.y + rows[1].row_bbox.height
+
+
 def test_top_clipped_first_row_is_skipped() -> None:
     image_rgb = np.full((REFERENCE_HEIGHT, REFERENCE_WIDTH, 3), 255, dtype=np.uint8)
 
