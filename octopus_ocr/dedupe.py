@@ -32,7 +32,7 @@ def dedupe_candidates(candidates: list[TransactionCandidate]) -> list[Transactio
         groups[key].append(candidate)
 
     records: list[TransactionRecord] = []
-    for group_index, (key, group) in enumerate(sorted(groups.items(), key=lambda item: item[0])):
+    for key, group in sorted(groups.items(), key=lambda item: item[0]):
         group.sort(key=lambda item: (item.source_image, item.row_index))
         representative = group[0]
         assert representative.parsed_payee is not None
@@ -46,10 +46,10 @@ def dedupe_candidates(candidates: list[TransactionCandidate]) -> list[Transactio
             warnings.append(f"Matched {len(group)} screenshot rows with the same normalized transaction key.")
 
         status = "review" if len(group) > 1 else "kept"
-        fitid = stable_id("octopus", key, group_index, length=24)
+        fitid = stable_id("octopus", key, length=24)
         records.append(
             TransactionRecord(
-                id=stable_id("txn", key, group_index, length=16),
+                id=stable_id("txn", key, length=16),
                 fitid=fitid,
                 source_images=sorted({candidate.source_image for candidate in group}),
                 row_refs=[f"{candidate.source_image}#{candidate.row_index}" for candidate in group],
