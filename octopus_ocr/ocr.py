@@ -73,7 +73,12 @@ class TesseractOcr:
                         "vars": config.get("vars", {}),
                     },
                 )
-                return _choose_amount_ocr_result(primary, secondary)
+                contextual = None
+                if _amount_needs_context_read(primary, secondary):
+                    context_path = Path(tmpdir) / "amount-context.png"
+                    _trim_ocr_whitespace(image, padding=30).save(context_path)
+                    contextual = self._read_tsv_stdout(context_path, bbox, config)
+                return _choose_amount_ocr_result(primary, secondary, contextual)
             text = self._read_text_file(image_path, output_base, config)
         return OcrField(text=text, confidence=None, bbox=bbox)
 
@@ -411,9 +416,31 @@ def _paddle_record_data(record: Any) -> dict[str, Any]:
     return {}
 
 
-def _choose_amount_ocr_result(primary: OcrField, secondary: OcrField) -> OcrField:
+def _choose_amount_ocr_result(
+    primary: OcrField,
+    secondary: OcrField,
+    contextual: OcrField | None = None,
+) -> OcrField:
     primary_digits = _digits(primary.text)
     secondary_digits = _digits(secondary.text)
+    if contextual is not None:
+        contextual_digits = _digits(contextual.text)
+        if (
+            _primary_is_missing_integer_digits(primary)
+            and len(contextual_digits) > len(primary_digits)
+            and contextual_digits.endswith(primary_digits)
+        ):
+            supported = contextual
+            if secondary_digits == contextual_digits and _confidence_value(secondary) > _confidence_value(contextual):
+                supported = secondary
+            return _format_secondary_amount(primary.text, supported)
+        if (
+            primary_digits != secondary_digits
+            and contextual_digits == secondary_digits
+            and _low_confidence(primary)
+            and _low_confidence(secondary)
+        ):
+            return _format_secondary_amount(primary.text, contextual)
     if not secondary_digits:
         return primary
     if not primary_digits:
@@ -434,6 +461,28 @@ def _choose_amount_ocr_result(primary: OcrField, secondary: OcrField) -> OcrFiel
     if primary.confidence > 20 or secondary.confidence < primary.confidence + 20:
         return primary
     return _format_secondary_amount(primary.text, secondary)
+
+
+def _amount_needs_context_read(primary: OcrField, secondary: OcrField) -> bool:
+    if _primary_is_missing_integer_digits(primary):
+        return True
+    primary_digits = _digits(primary.text)
+    secondary_digits = _digits(secondary.text)
+    return (
+        bool(primary_digits)
+        and len(primary_digits) == len(secondary_digits)
+        and primary_digits != secondary_digits
+        and _low_confidence(primary)
+        and _low_confidence(secondary)
+    )
+
+
+def _low_confidence(field: OcrField) -> bool:
+    return field.confidence is not None and field.confidence <= 20
+
+
+def _confidence_value(field: OcrField) -> float:
+    return field.confidence if field.confidence is not None else -1.0
 
 
 def _format_secondary_amount(primary_text: str, secondary: OcrField) -> OcrField:

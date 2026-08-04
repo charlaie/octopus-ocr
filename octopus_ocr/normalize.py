@@ -25,8 +25,10 @@ def _canonicalize_known_payee(text: str) -> str:
         return "PARKnSHOP"
     if re.fullmatch(r"city[\s\d_'\-]*super", text, flags=re.IGNORECASE):
         return "city'super"
-    if re.fullmatch(r"[hn]ana[\s\d_'\-]*musub[i1l]", text, flags=re.IGNORECASE):
+    if re.fullmatch(r"(?:h|n{1,2})ana[\s\d_'\-]*musub[i1l]", text, flags=re.IGNORECASE):
         return "Hana-Musubi"
+    if re.fullmatch(r"(?:ere|etez|ets)", text, flags=re.IGNORECASE):
+        return "美士多"
     return text
 
 
