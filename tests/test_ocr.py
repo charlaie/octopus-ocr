@@ -31,6 +31,29 @@ def test_amount_ocr_uses_secondary_when_primary_loses_integer_digits() -> None:
     assert result.confidence == 44.49
 
 
+def test_amount_ocr_uses_context_when_tight_crop_loses_integer_digit() -> None:
+    bbox = BBox(x=0, y=0, width=100, height=50)
+    primary = OcrField(text="-.4", confidence=0.0, bbox=bbox)
+    secondary = OcrField(text="-4", confidence=0.0, bbox=bbox)
+    contextual = OcrField(text="-7.4", confidence=8.38, bbox=bbox)
+
+    result = _choose_amount_ocr_result(primary, secondary, contextual)
+
+    assert result.text == "-7.4"
+    assert result.confidence == 8.38
+
+
+def test_amount_ocr_uses_context_to_resolve_ambiguous_leading_digit() -> None:
+    bbox = BBox(x=0, y=0, width=100, height=50)
+    primary = OcrField(text="-1.4", confidence=0.0, bbox=bbox)
+    secondary = OcrField(text="-74", confidence=0.0, bbox=bbox)
+    contextual = OcrField(text="-7.4", confidence=0.0, bbox=bbox)
+
+    result = _choose_amount_ocr_result(primary, secondary, contextual)
+
+    assert result.text == "-7.4"
+
+
 def test_amount_ocr_uses_secondary_when_primary_drops_leading_digit() -> None:
     bbox = BBox(x=0, y=0, width=100, height=50)
     primary = OcrField(text="-4.0", confidence=0.0, bbox=bbox)

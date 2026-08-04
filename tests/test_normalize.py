@@ -71,4 +71,8 @@ def test_normalize_payee_canonicalizes_known_merchant_ocr_variants() -> None:
     assert normalize_payee("city Super") == "city'super"
     assert normalize_payee("city5super") == "city'super"
     assert normalize_payee("Nana-musubl") == "Hana-Musubi"
+    assert normalize_payee("Nnana-musubl") == "Hana-Musubi"
     assert normalize_payee("hana musubi") == "Hana-Musubi"
+    assert normalize_payee("Ere") == "美士多"
+    assert normalize_payee("ETeZ") == "美士多"
+    assert normalize_payee("ETS") == "美士多"
