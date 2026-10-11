@@ -4,11 +4,122 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
+from PIL import Image
 import pytest
 
 from octopus_ocr.models import BBox, OcrField
-from octopus_ocr.ocr import OcrUnavailableError, TesseractOcr
-from octopus_ocr.pipeline import run_pipeline
+from octopus_ocr.ocr import OcrFieldName, OcrUnavailableError, TesseractOcr
+from octopus_ocr.pipeline import _read_row, run_pipeline
+from octopus_ocr.vision import RowRegion
+
+
+def _row_region() -> RowRegion:
+    return RowRegion(
+        row_bbox=BBox(x=40, y=990, width=1060, height=209),
+        icon_bbox=BBox(x=72, y=1047, width=96, height=96),
+        category="transport",
+        payee_bbox=BBox(x=205, y=1040, width=650, height=56),
+        datetime_bbox=BBox(x=205, y=1107, width=430, height=47),
+        amount_bbox=BBox(x=850, y=1050, width=215, height=80),
+        amount_direction="outflow",
+    )
+
+
+class _FieldReader(TesseractOcr):
+    values = {"payee": "MTR", "datetime": "2026-05-16 21:46", "amount": "-12.0"}
+
+    def assert_available(self) -> None:
+        return None
+
+    def read_image(self, image: Image.Image, bbox: BBox, *, mode: str) -> OcrField:
+        return OcrField(text=self.values[mode], confidence=99.0, bbox=bbox)
+
+
+class _RowReader(_FieldReader):
+    def read_row_fields(
+        self, row_image: Image.Image, row_bbox: BBox, field_bboxes: dict[OcrFieldName, BBox]
+    ) -> dict[OcrFieldName, OcrField]:
+        return {name: OcrField(text=self.values[name], confidence=99.0, bbox=bbox) for name, bbox in field_bboxes.items()}
+
+
+@pytest.mark.parametrize("write_debug", [False, True])
+@pytest.mark.parametrize("use_row_reader", [False, True])
+def test_read_row_only_crops_fields_that_are_needed(monkeypatch, tmp_path: Path, write_debug: bool, use_row_reader: bool) -> None:
+    row = _row_region()
+    crop_calls: list[BBox] = []
+
+    def crop(image, bbox):
+        crop_calls.append(bbox)
+        return Image.new("RGB", (8, 8))
+
+    monkeypatch.setattr("octopus_ocr.pipeline.to_pil_crop", crop)
+    reader = _RowReader() if use_row_reader else _FieldReader()
+
+    candidate = _read_row(
+        np.empty((0, 0, 3)), Path("image.png"), 0, row, reader,
+        tmp_path if write_debug else None, debug_label="image",
+    )
+
+    expected_crops = [] if use_row_reader and not write_debug else [row.payee_bbox, row.datetime_bbox, row.amount_bbox]
+    if use_row_reader:
+        expected_crops.append(row.row_bbox)
+    assert crop_calls == expected_crops
+    assert candidate.parsed_payee == "MTR"
+    assert candidate.parsed_amount == Decimal("-12.0")
+    assert candidate.warnings == []
+    assert len(list(tmp_path.glob("*.png"))) == (3 if write_debug else 0)
+
+
+def test_read_row_falls_back_for_fields_missing_from_row_result(monkeypatch) -> None:
+    class PartialRowReader(_RowReader):
+        def read_row_fields(self, row_image, row_bbox, field_bboxes):
+            fields = super().read_row_fields(row_image, row_bbox, field_bboxes)
+            del fields["amount"]
+            return fields
+
+    row = _row_region()
+    crop_calls = []
+    monkeypatch.setattr(
+        "octopus_ocr.pipeline.to_pil_crop",
+        lambda image, bbox: crop_calls.append(bbox) or Image.new("RGB", (8, 8)),
+    )
+
+    candidate = _read_row(np.empty((0, 0, 3)), Path("image.png"), 0, row, PartialRowReader(), None, debug_label="image")
+
+    assert crop_calls == [row.row_bbox, row.amount_bbox]
+    assert candidate.parsed_amount == Decimal("-12.0")
+
+
+def test_read_row_preserves_warning_when_row_reader_fails(monkeypatch) -> None:
+    class FailingRowReader(_RowReader):
+        def read_row_fields(self, row_image, row_bbox, field_bboxes):
+            raise RuntimeError("failed prediction")
+
+    monkeypatch.setattr("octopus_ocr.pipeline.to_pil_crop", lambda image, bbox: Image.new("RGB", (8, 8)))
+
+    candidate = _read_row(np.empty((0, 0, 3)), Path("image.png"), 0, _row_region(), FailingRowReader(), None, debug_label="image")
+
+    assert candidate.parsed_amount == Decimal("-12.0")
+    assert candidate.warnings == ["row OCR failed: failed prediction"]
+
+
+def test_pipeline_keeps_debug_evidence_for_same_named_inputs(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("octopus_ocr.pipeline.load_rgb", lambda path: np.zeros((1, 1, 3), dtype=np.uint8))
+    monkeypatch.setattr("octopus_ocr.pipeline.detect_rows", lambda image: [_row_region()])
+    monkeypatch.setattr("octopus_ocr.pipeline.to_pil_crop", lambda image, bbox: Image.new("RGB", (8, 8)))
+    monkeypatch.setattr("octopus_ocr.pipeline.annotate_rows", lambda image, rows: Image.new("RGB", (8, 8)))
+    paths = [tmp_path / "first" / "same.png", tmp_path / "second" / "same.png", tmp_path / "unique.png"]
+    out_dir = tmp_path / "out"
+
+    run_pipeline(paths, out_dir, ocr=_FieldReader())
+
+    debug_files = list((out_dir / "debug").glob("*.png"))
+    assert len(debug_files) == 12
+    assert len(list((out_dir / "debug").glob("same_*_annotated.png"))) == 2
+    assert len(list((out_dir / "debug").glob("same_*_00_amount.png"))) == 2
+    assert (out_dir / "debug" / "unique_annotated.png").is_file()
+    assert (out_dir / "debug" / "unique_00_payee.png").is_file()
 
 
 class MissingOcr(TesseractOcr):

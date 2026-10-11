@@ -41,6 +41,15 @@ class TransactionCandidate(BaseModel):
     direction: Direction | None = None
     warnings: list[str] = Field(default_factory=list)
 
+    @property
+    def is_parsed(self) -> bool:
+        return bool(
+            self.parsed_payee
+            and self.parsed_datetime
+            and self.parsed_amount is not None
+            and self.direction
+        )
+
 
 class TransactionRecord(BaseModel):
     id: str

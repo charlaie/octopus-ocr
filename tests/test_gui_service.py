@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import SimpleNamespace
+
+import pytest
 
 from octopus_ocr.app_bundle import make_dev_app
 from octopus_ocr.gui_service import create_run_dir, run_gui_pipeline
+from octopus_ocr.models import BBox, OcrField, PipelineResult, TransactionCandidate, TransactionRecord
+from octopus_ocr.pipeline import ProgressEvent
+from octopus_ocr.video import VideoExtractionResult
 
 
 def test_create_run_dir_uses_timestamp_and_suffixes_existing_runs(tmp_path: Path) -> None:
@@ -14,6 +20,15 @@ def test_create_run_dir_uses_timestamp_and_suffixes_existing_runs(tmp_path: Path
     existing.mkdir()
 
     assert create_run_dir(tmp_path, now=now) == tmp_path / "20260609-140506-2"
+
+
+def test_concurrent_runs_reserve_distinct_output_directories(tmp_path: Path) -> None:
+    now = datetime(2026, 6, 9, 14, 5, 6)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        directories = list(executor.map(lambda _: create_run_dir(tmp_path, now=now), range(8)))
+
+    assert len(set(directories)) == 8
+    assert all(directory.is_dir() for directory in directories)
 
 
 def test_run_gui_pipeline_expands_inputs_and_returns_summary(tmp_path: Path) -> None:
@@ -27,9 +42,22 @@ def test_run_gui_pipeline_expands_inputs_and_returns_summary(tmp_path: Path) -> 
 
     def fake_pipeline(image_paths, out_dir, *, write_debug, ocr_engine, paddle_model, progress):
         calls["pipeline"] = (image_paths, out_dir, write_debug, ocr_engine, paddle_model, progress)
-        return SimpleNamespace(
-            candidates=[SimpleNamespace(warnings=[]), SimpleNamespace(warnings=["check amount"])],
-            transactions=[object()],
+        box = BBox(x=0, y=0, width=1, height=1)
+        field = OcrField(bbox=box)
+        candidates = [
+            TransactionCandidate(
+                source_image="input.png", row_index=index, row_bbox=box, icon_bbox=box, category="transport",
+                payee=field, datetime_field=field, amount_field=field, warnings=warnings,
+            )
+            for index, warnings in enumerate([[], ["check amount"]])
+        ]
+        record = TransactionRecord(
+            id="transaction", fitid="fit", source_images=["input.png"], row_refs=["input.png:0"],
+            duplicate_group="transaction", dedupe_status="kept", datetime=datetime(2026, 6, 9),
+            payee="MTR", amount=Decimal("-10"), direction="outflow", category="transport",
+        )
+        return PipelineResult(
+            generated_at=datetime(2026, 6, 9), input_images=["input.png"], candidates=candidates, transactions=[record],
         )
 
     result = run_gui_pipeline(
@@ -55,6 +83,41 @@ def test_run_gui_pipeline_expands_inputs_and_returns_summary(tmp_path: Path) -> 
     assert result.exported_transactions == 1
     assert result.warning_rows == 1
     assert result.output_files["review"] == result.output_dir / "review.csv"
+
+
+def test_gui_preserves_video_warnings_and_includes_extraction_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    video = tmp_path / "recording.mov"
+    video.touch()
+    ticks = iter([10.0, 20.0])
+    timer_calls: list[float] = []
+
+    def clock() -> float:
+        value = next(ticks)
+        timer_calls.append(value)
+        return value
+
+    def extract(video_path, frames_dir, *, sample_fps):
+        assert timer_calls == [10.0]
+        return VideoExtractionResult(
+            frames=[frames_dir / "frame_0001.png"], warnings=["possible skipped transactions"],
+            sampled_frame_count=10, relevant_frame_count=8,
+        )
+
+    def pipeline(image_paths, out_dir, *, write_debug, ocr_engine, paddle_model, progress) -> PipelineResult:
+        return PipelineResult(generated_at=datetime(2026, 6, 9), input_images=[], candidates=[], transactions=[])
+
+    monkeypatch.setattr("octopus_ocr.gui_service.perf_counter", clock)
+    monkeypatch.setattr("octopus_ocr.inputs.extract_video_keyframes", extract)
+    events: list[ProgressEvent] = []
+
+    result = run_gui_pipeline([video], out_root=tmp_path / "runs", progress=events.append, pipeline_runner=pipeline)
+
+    assert result.total_seconds == 10.0
+    assert result.video_warnings == ("possible skipped transactions",)
+    assert result.to_dict()["video_warnings"] == ["possible skipped transactions"]
+    assert result.warning_rows == 0
+    assert events[0].phase == "prepare"
+    assert "recording.mov" in events[0].message
 
 
 def test_make_dev_app_writes_launcher_bundle(tmp_path: Path) -> None:

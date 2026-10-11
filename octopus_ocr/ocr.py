@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast
+from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast, runtime_checkable
 
 from PIL import Image
 
@@ -30,12 +31,23 @@ class _PaddleTextLine:
 
 
 OcrEngineName = Literal["tesseract", "paddle"]
+OcrFieldName = Literal["payee", "datetime", "amount"]
 
 
 class OcrEngine(Protocol):
     def assert_available(self) -> None: ...
 
     def read_image(self, image: Image.Image, bbox: BBox, *, mode: str) -> OcrField: ...
+
+
+@runtime_checkable
+class RowOcrEngine(Protocol):
+    def read_row_fields(
+        self,
+        row_image: Image.Image,
+        row_bbox: BBox,
+        field_bboxes: dict[OcrFieldName, BBox],
+    ) -> dict[OcrFieldName, OcrField]: ...
 
 
 def create_ocr_engine(name: OcrEngineName, *, paddle_model: str = "en_PP-OCRv5_mobile_rec") -> OcrEngine:
@@ -190,10 +202,10 @@ class PaddleOcr:
         self,
         row_image: Image.Image,
         row_bbox: BBox,
-        field_bboxes: dict[str, BBox],
-    ) -> dict[str, OcrField]:
+        field_bboxes: dict[OcrFieldName, BBox],
+    ) -> dict[OcrFieldName, OcrField]:
         lines = self._read_lines(row_image, mode="row")
-        fields: dict[str, OcrField] = {}
+        fields: dict[OcrFieldName, OcrField] = {}
         for name, field_bbox in field_bboxes.items():
             field_box = _field_bbox_in_row_image(field_bbox, row_bbox, row_image.size)
             field_lines = _lines_intersecting_box(lines, field_box)
@@ -232,11 +244,11 @@ class PaddleOcr:
             image_path = Path(tmpdir) / f"{mode}.png"
             image.save(image_path)
             output = model.predict(input=str(image_path))
-        return _extract_paddle_lines(output)
+            return _extract_paddle_lines(output)
 
 
-def _extract_paddle_lines(output: Any) -> list[_PaddleTextLine]:
-    records = list(output) if isinstance(output, (list, tuple)) else [output]
+def _extract_paddle_lines(output: object) -> list[_PaddleTextLine]:
+    records = output if isinstance(output, Iterable) and not isinstance(output, (Mapping, str, bytes)) else [output]
     lines: list[_PaddleTextLine] = []
     for record in records:
         data = _paddle_record_data(record)
@@ -248,20 +260,24 @@ def _extract_paddle_lines(output: Any) -> list[_PaddleTextLine]:
         for index, text in enumerate(texts):
             if not isinstance(text, str) or not text.strip() or index >= len(boxes):
                 continue
+            box = boxes[index]
+            if box is None:
+                continue
             score = scores[index] if isinstance(scores, list) and index < len(scores) else None
             confidence = float(score) * 100 if isinstance(score, (int, float)) else None
-            lines.append(_PaddleTextLine(text=text.strip(), confidence=confidence, box=boxes[index]))
+            lines.append(_PaddleTextLine(text=text.strip(), confidence=confidence, box=box))
     return lines
 
 
-def _paddle_boxes(raw_boxes: Any) -> list[tuple[float, float, float, float]]:
+def _paddle_boxes(raw_boxes: Any) -> list[tuple[float, float, float, float] | None]:
     if hasattr(raw_boxes, "tolist"):
         raw_boxes = raw_boxes.tolist()
-    boxes: list[tuple[float, float, float, float]] = []
+    boxes: list[tuple[float, float, float, float] | None] = []
     if not isinstance(raw_boxes, list):
         return boxes
     for raw_box in raw_boxes:
         if not isinstance(raw_box, list | tuple) or len(raw_box) < 4:
+            boxes.append(None)
             continue
         try:
             left = float(raw_box[0])
@@ -269,6 +285,7 @@ def _paddle_boxes(raw_boxes: Any) -> list[tuple[float, float, float, float]]:
             right = float(raw_box[2])
             bottom = float(raw_box[3])
         except (TypeError, ValueError):
+            boxes.append(None)
             continue
         boxes.append((left, top, right, bottom))
     return boxes
@@ -383,23 +400,6 @@ def _box_center_in_box(
     return outer[0] <= center_x <= outer[2] and outer[1] <= center_y <= outer[3]
 
 
-def _extract_paddle_text(output: Any) -> tuple[str, float | None]:
-    records = list(output) if isinstance(output, (list, tuple)) else [output]
-    texts: list[str] = []
-    scores: list[float] = []
-    for record in records:
-        data = _paddle_record_data(record)
-        text = data.get("rec_text")
-        if isinstance(text, str) and text.strip():
-            texts.append(text.strip())
-        score = data.get("rec_score")
-        if isinstance(score, (int, float)):
-            scores.append(float(score) * 100)
-
-    confidence = round(sum(scores) / len(scores), 2) if scores else None
-    return " ".join(texts).strip(), confidence
-
-
 def _paddle_record_data(record: Any) -> dict[str, Any]:
     if isinstance(record, dict):
         value = record.get("res", record)
@@ -487,10 +487,11 @@ def _confidence_value(field: OcrField) -> float:
 
 def _format_secondary_amount(primary_text: str, secondary: OcrField) -> OcrField:
     digits = _digits(secondary.text)
-    sign = "-" if "-" in primary_text or "−" in primary_text or secondary.text.strip().startswith("-") else ""
-    decimal_places = _primary_decimal_places(primary_text)
-    if decimal_places is not None and len(digits) > decimal_places:
-        text = f"{sign}{digits[:-decimal_places]}.{digits[-decimal_places:]}"
+    sign = "-" if "-" in primary_text or "−" in primary_text or secondary.text.strip().startswith(("-", "−")) else ""
+    has_primary_digits = bool(_digits(primary_text))
+    decimal_places = _primary_decimal_places(primary_text if has_primary_digits else secondary.text)
+    if decimal_places is not None and (len(digits) > decimal_places or not has_primary_digits):
+        text = f"{sign}{digits[:-decimal_places] or '0'}.{digits[-decimal_places:]}"
     else:
         text = f"{sign}{digits}"
     return OcrField(text=text, confidence=secondary.confidence, bbox=secondary.bbox)

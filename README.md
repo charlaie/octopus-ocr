@@ -3,7 +3,7 @@
 OCR Octopus transaction screenshots and export:
 
 - `transactions.json`: canonical records with OCR/debug metadata
-- `review.csv`: human inspection file
+- `review.csv`: human inspection file, including rows with failed OCR
 - `monthly_category_totals.csv`: manual verification totals grouped by month and category
 - `actual.ofx`: import file for Actual Budget
 - `debug/`: cropped OCR fields and annotated screenshots
@@ -44,6 +44,8 @@ uv run octopus-ocr data/*.PNG --out out/ --ocr-engine paddle
 ```
 
 Inspect `out/review.csv` and `out/monthly_category_totals.csv` before importing `out/actual.ofx` into Actual Budget.
+Rows with an unparsed payee, date, or amount stay in the review CSV and JSON with their OCR evidence and warnings.
+They are excluded from monthly totals and OFX until they can be parsed.
 
 ## Local GUI
 

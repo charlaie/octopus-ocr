@@ -5,13 +5,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Iterator, Literal, cast
+from typing import Callable, Iterator, Literal
+
+import numpy as np
+from PIL import Image
 
 from octopus_ocr.dedupe import dedupe_candidates
 from octopus_ocr.exporters import write_json, write_monthly_category_csv, write_ofx, write_review_csv
+from octopus_ocr.inputs import source_output_labels
 from octopus_ocr.models import BBox, OcrField, PipelineResult, ProcessTiming, TransactionCandidate
 from octopus_ocr.normalize import normalize_payee, parse_amount, parse_datetime
-from octopus_ocr.ocr import OcrEngine, OcrEngineName, create_ocr_engine
+from octopus_ocr.ocr import OcrEngine, OcrEngineName, OcrFieldName, RowOcrEngine, create_ocr_engine
 from octopus_ocr.vision import RowRegion, annotate_rows, detect_rows, load_rgb, to_pil_crop
 
 
@@ -38,6 +42,7 @@ ProgressCallback = Callable[[ProgressEvent], None]
 class _ImageRows:
     path: Path
     rows: list[RowRegion]
+    debug_label: str
 
 
 def run_pipeline(
@@ -65,6 +70,7 @@ def run_pipeline(
 
     image_rows: list[_ImageRows] = []
     image_count = len(image_paths)
+    debug_labels = source_output_labels(image_paths)
     for image_index, image_path in enumerate(image_paths, start=1):
         _emit_progress(
             progress,
@@ -82,8 +88,8 @@ def run_pipeline(
             rows = detect_rows(image_rgb)
         if write_debug:
             with timer.step("write debug annotations"):
-                annotate_rows(image_rgb, rows).save(debug_dir / f"{image_path.stem}_annotated.png")
-        image_rows.append(_ImageRows(path=image_path, rows=rows))
+                annotate_rows(image_rgb, rows).save(debug_dir / f"{debug_labels[image_path]}_annotated.png")
+        image_rows.append(_ImageRows(path=image_path, rows=rows, debug_label=debug_labels[image_path]))
 
     total_rows = sum(len(plan.rows) for plan in image_rows)
     _emit_progress(
@@ -127,6 +133,7 @@ def run_pipeline(
                     row,
                     engine,
                     debug_dir if write_debug else None,
+                    debug_label=plan.debug_label,
                 )
             candidates.append(candidate)
             completed_rows += 1
@@ -156,7 +163,7 @@ def run_pipeline(
         transactions=records,
     )
     with timer.step("write review.csv"):
-        write_review_csv(records, out_dir / "review.csv")
+        write_review_csv(records, out_dir / "review.csv", candidates=candidates)
     with timer.step("write monthly_category_totals.csv"):
         write_monthly_category_csv(records, out_dir / "monthly_category_totals.csv")
     with timer.step("write actual.ofx"):
@@ -185,44 +192,44 @@ def _emit_progress(progress: ProgressCallback | None, event: ProgressEvent) -> N
 
 
 def _read_row(
-    image_rgb,
+    image_rgb: np.ndarray,
     image_path: Path,
     row_index: int,
-    row,
+    row: RowRegion,
     ocr_engine: OcrEngine,
     debug_dir: Path | None,
+    *,
+    debug_label: str,
 ) -> TransactionCandidate:
     warnings: list[str] = []
-    fields: dict[str, OcrField] = {}
-    field_specs = [
-        ("payee", row.payee_bbox, "payee"),
-        ("datetime", row.datetime_bbox, "datetime"),
-        ("amount", row.amount_bbox, "amount"),
-    ]
-    for name, bbox, _mode in field_specs:
-        crop = to_pil_crop(image_rgb, bbox)
-        if debug_dir:
-            crop.save(debug_dir / f"{image_path.stem}_{row_index:02d}_{name}.png")
+    fields: dict[OcrFieldName, OcrField] = {}
+    field_bboxes: dict[OcrFieldName, BBox] = {
+        "payee": row.payee_bbox,
+        "datetime": row.datetime_bbox,
+        "amount": row.amount_bbox,
+    }
+    crops: dict[OcrFieldName, Image.Image] = {}
+    if debug_dir is not None:
+        for name, bbox in field_bboxes.items():
+            crop = to_pil_crop(image_rgb, bbox)
+            crops[name] = crop
+            crop.save(debug_dir / f"{debug_label}_{row_index:02d}_{name}.png")
 
-    read_row_fields = getattr(ocr_engine, "read_row_fields", None)
-    if callable(read_row_fields):
+    if isinstance(ocr_engine, RowOcrEngine):
         try:
             row_crop = to_pil_crop(image_rgb, row.row_bbox)
-            row_reader = cast(Callable[[Any, BBox, dict[str, BBox]], dict[str, OcrField]], read_row_fields)
-            fields = row_reader(
-                row_crop,
-                row.row_bbox,
-                {name: bbox for name, bbox, _mode in field_specs},
-            )
+            fields = ocr_engine.read_row_fields(row_crop, row.row_bbox, field_bboxes)
         except Exception as exc:  # noqa: BLE001 - preserve partial row evidence for review.
             warnings.append(f"row OCR failed: {exc}")
 
-    for name, bbox, mode in field_specs:
+    for name, bbox in field_bboxes.items():
         if name in fields:
             continue
-        crop = to_pil_crop(image_rgb, bbox)
+        crop = crops.get(name)
+        if crop is None:
+            crop = to_pil_crop(image_rgb, bbox)
         try:
-            fields[name] = ocr_engine.read_image(crop, bbox, mode=mode)
+            fields[name] = ocr_engine.read_image(crop, bbox, mode=name)
         except Exception as exc:  # noqa: BLE001 - preserve partial row evidence for review.
             warnings.append(f"{name} OCR failed: {exc}")
             fields[name] = OcrField(text="", confidence=None, bbox=bbox)

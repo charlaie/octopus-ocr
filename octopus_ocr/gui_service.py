@@ -4,17 +4,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable
+from typing import Protocol
 
-from octopus_ocr.inputs import IMAGE_SUFFIXES, expand_input_paths
+from octopus_ocr.inputs import expand_input_paths, prepare_image_paths
 from octopus_ocr.models import PipelineResult
 from octopus_ocr.ocr import OcrEngineName
 from octopus_ocr.pipeline import ProgressCallback, ProgressEvent, run_pipeline
-from octopus_ocr.video import DEFAULT_VIDEO_SAMPLE_FPS, extract_video_keyframes, is_video_path
+from octopus_ocr.video import DEFAULT_VIDEO_SAMPLE_FPS
 
 
 DEFAULT_GUI_OUT_ROOT = Path("out/gui-runs")
 DEFAULT_PADDLE_MODEL = "en_PP-OCRv5_mobile_rec"
+
+
+class PipelineRunner(Protocol):
+    def __call__(
+        self, image_paths: list[Path], out_dir: Path, *, write_debug: bool,
+        ocr_engine: OcrEngineName, paddle_model: str, progress: ProgressCallback | None,
+    ) -> PipelineResult: ...
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,7 @@ class GuiRunResult:
     exported_transactions: int
     warning_rows: int
     total_seconds: float
+    video_warnings: tuple[str, ...] = ()
 
     @property
     def output_files(self) -> dict[str, Path]:
@@ -44,21 +52,23 @@ class GuiRunResult:
             "exported_transactions": self.exported_transactions,
             "warning_rows": self.warning_rows,
             "total_seconds": self.total_seconds,
+            "video_warnings": list(self.video_warnings),
             "output_files": {name: str(path) for name, path in self.output_files.items()},
         }
 
 
 def create_run_dir(out_root: Path = DEFAULT_GUI_OUT_ROOT, *, now: datetime | None = None) -> Path:
     timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    candidate = out_root / timestamp
-    if not candidate.exists():
-        return candidate
-    suffix = 2
+    out_root.mkdir(parents=True, exist_ok=True)
+    suffix = 1
     while True:
-        suffixed = out_root / f"{timestamp}-{suffix}"
-        if not suffixed.exists():
-            return suffixed
-        suffix += 1
+        candidate = out_root / (timestamp if suffix == 1 else f"{timestamp}-{suffix}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            suffix += 1
+            continue
+        return candidate
 
 
 def run_gui_pipeline(
@@ -70,20 +80,27 @@ def run_gui_pipeline(
     progress: ProgressCallback | None = None,
     video_sample_fps: float = DEFAULT_VIDEO_SAMPLE_FPS,
     now: datetime | None = None,
-    pipeline_runner: Callable[..., Any] = run_pipeline,
+    pipeline_runner: PipelineRunner = run_pipeline,
 ) -> GuiRunResult:
     expanded_inputs = expand_input_paths(input_paths)
     if not expanded_inputs:
         raise ValueError("Drop at least one supported image, video, or folder.")
 
+    started = perf_counter()
     out_dir = create_run_dir(out_root, now=now)
-    image_paths = _expand_videos(expanded_inputs, out_dir, progress=progress, video_sample_fps=video_sample_fps)
-    if not image_paths:
+
+    def on_video_start(path: Path) -> None:
+        if progress is not None:
+            progress(ProgressEvent("prepare", f"Extracting keyframes from {path.name}", output_path=out_dir))
+
+    prepared = prepare_image_paths(
+        expanded_inputs, out_dir / "frames", sample_fps=video_sample_fps, on_video_start=on_video_start,
+    )
+    if not prepared.image_paths:
         raise ValueError("No screenshot images or video keyframes were found.")
 
-    started = perf_counter()
     result = pipeline_runner(
-        image_paths,
+        prepared.image_paths,
         out_dir,
         write_debug=True,
         ocr_engine=ocr_engine,
@@ -91,46 +108,12 @@ def run_gui_pipeline(
         progress=progress,
     )
     total_seconds = perf_counter() - started
-    return _summarize_result(result, out_dir, len(expanded_inputs), total_seconds)
-
-
-def _expand_videos(
-    input_paths: list[Path],
-    out_dir: Path,
-    *,
-    progress: ProgressCallback | None,
-    video_sample_fps: float,
-) -> list[Path]:
-    image_paths: list[Path] = []
-    for input_path in input_paths:
-        if input_path.suffix.lower() in IMAGE_SUFFIXES:
-            image_paths.append(input_path)
-            continue
-        if not is_video_path(input_path):
-            continue
-
-        _emit_progress(progress, ProgressEvent("prepare", f"Extracting keyframes from {input_path.name}", output_path=out_dir))
-        extraction = extract_video_keyframes(input_path, out_dir / "frames" / _safe_stem(input_path), sample_fps=video_sample_fps)
-        image_paths.extend(extraction.frames)
-    return image_paths
-
-
-def _summarize_result(result: PipelineResult, out_dir: Path, input_count: int, total_seconds: float) -> GuiRunResult:
     return GuiRunResult(
         output_dir=out_dir,
-        input_count=input_count,
+        input_count=len(expanded_inputs),
         detected_rows=len(result.candidates),
         exported_transactions=len(result.transactions),
-        warning_rows=len([candidate for candidate in result.candidates if candidate.warnings]),
+        warning_rows=sum(bool(candidate.warnings) for candidate in result.candidates),
         total_seconds=total_seconds,
+        video_warnings=tuple(warning for video in prepared.videos for warning in video.extraction.warnings),
     )
-
-
-def _safe_stem(path: Path) -> str:
-    cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in path.stem)
-    return cleaned.strip("_") or "video"
-
-
-def _emit_progress(progress: ProgressCallback | None, event: ProgressEvent) -> None:
-    if progress is not None:
-        progress(event)

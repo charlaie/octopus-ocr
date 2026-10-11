@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import os
+import shlex
 import struct
 import subprocess
 import sys
@@ -18,7 +19,7 @@ SvgRenderer = Callable[[Path, int], bytes]
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = argv or []
+    args = sys.argv[1:] if argv is None else argv
     repo_root = Path(__file__).resolve().parents[1]
     app_path = Path(args[0]) if args else repo_root / "dist" / f"{APP_NAME}.app"
     make_dev_app(app_path, repo_root=repo_root)
@@ -73,11 +74,10 @@ def _info_plist() -> str:
 
 
 def _launcher_script(repo_root: Path) -> str:
-    quoted_repo_root = str(repo_root).replace('"', '\\"')
     path = os.environ.get("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     return f"""#!/bin/sh
-export PATH="{path}"
-cd "{quoted_repo_root}" || exit 1
+export PATH={shlex.quote(path)}
+cd {shlex.quote(str(repo_root))} || exit 1
 exec uv run octopus-ocr-gui
 """
 

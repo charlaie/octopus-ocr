@@ -10,6 +10,21 @@ cv2 = pytest.importorskip("cv2")
 from octopus_ocr.vision import REFERENCE_HEIGHT, REFERENCE_WIDTH, detect_rows, load_rgb  # noqa: E402
 
 
+@pytest.mark.parametrize("scale", [0.5, 0.75, 1.5, 2.0])
+@pytest.mark.parametrize("path", [*sorted(Path("data").glob("*.PNG")), Path("data/fare_subsidy.jpeg")])
+def test_fixture_rows_survive_resolution_changes(path: Path, scale: float) -> None:
+    image = load_rgb(path)
+    expected = detect_rows(image)
+    resized = cv2.resize(image, None, fx=scale, fy=scale)
+
+    rows = detect_rows(resized)
+
+    assert [(row.category, row.amount_direction) for row in rows] == [
+        (row.category, row.amount_direction) for row in expected
+    ]
+    assert all(row.datetime_bbox.y >= row.payee_bbox.y + row.payee_bbox.height - 10 * scale for row in rows)
+
+
 def test_fixture_screenshots_have_detectable_transaction_rows() -> None:
     paths = sorted(Path("data").glob("*.PNG"))
     assert len(paths) == 5

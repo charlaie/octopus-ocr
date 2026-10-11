@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import csv
-import json
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
 from html import escape
 from pathlib import Path
 from typing import get_args
 
-from octopus_ocr.models import Category, PipelineResult, TransactionRecord
+from octopus_ocr.models import Category, PipelineResult, TransactionCandidate, TransactionRecord
 
 
 CSV_FIELDS = [
@@ -40,7 +40,12 @@ def write_json(result: PipelineResult, path: Path) -> None:
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
 
 
-def write_review_csv(records: list[TransactionRecord], path: Path) -> None:
+def write_review_csv(
+    records: list[TransactionRecord],
+    path: Path,
+    *,
+    candidates: Iterable[TransactionCandidate] = (),
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDS)
@@ -61,6 +66,27 @@ def write_review_csv(records: list[TransactionRecord], path: Path) -> None:
                     "row_refs": ";".join(record.row_refs),
                     "confidence": "" if record.confidence is None else record.confidence,
                     "warnings": " | ".join(record.warnings),
+                }
+            )
+        for candidate in candidates:
+            if candidate.is_parsed:
+                continue
+            when = candidate.parsed_datetime
+            writer.writerow(
+                {
+                    "datetime": when.isoformat(timespec="minutes") if when is not None else candidate.datetime_field.text,
+                    "date": when.date().isoformat() if when is not None else "",
+                    "payee": candidate.parsed_payee or candidate.payee.text,
+                    "amount": _decimal_text(candidate.parsed_amount) if candidate.parsed_amount is not None else candidate.amount_field.text,
+                    "direction": candidate.direction or "",
+                    "category": candidate.category,
+                    "dedupe_status": "review",
+                    "duplicate_group": "",
+                    "fitid": "",
+                    "source_images": candidate.source_image,
+                    "row_refs": f"{candidate.source_image}#{candidate.row_index}",
+                    "confidence": "",
+                    "warnings": " | ".join(candidate.warnings),
                 }
             )
 

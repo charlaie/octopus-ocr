@@ -7,14 +7,7 @@ from octopus_ocr.normalize import canonical_key, stable_id
 
 
 def dedupe_candidates(candidates: list[TransactionCandidate]) -> list[TransactionRecord]:
-    parsed = [
-        candidate
-        for candidate in candidates
-        if candidate.parsed_payee
-        and candidate.parsed_datetime
-        and candidate.parsed_amount is not None
-        and candidate.direction
-    ]
+    parsed = [candidate for candidate in candidates if candidate.is_parsed]
 
     groups: dict[str, list[TransactionCandidate]] = defaultdict(list)
     for candidate in parsed:

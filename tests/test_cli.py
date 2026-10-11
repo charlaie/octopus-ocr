@@ -48,7 +48,7 @@ def test_cli_expands_video_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
         calls["pipeline"] = (image_paths, out_dir, write_debug, ocr_engine, paddle_model)
         return SimpleNamespace(candidates=[], transactions=[])
 
-    monkeypatch.setattr("octopus_ocr.cli.extract_video_keyframes", fake_extract)
+    monkeypatch.setattr("octopus_ocr.inputs.extract_video_keyframes", fake_extract)
     monkeypatch.setattr("octopus_ocr.cli.run_pipeline", fake_pipeline)
 
     out_dir = tmp_path / "out"
@@ -139,9 +139,10 @@ def test_format_duration() -> None:
     assert _format_duration(65.0) == "1m 05.0s"
 
 
-def test_cli_rejects_non_positive_video_sample_fps() -> None:
+@pytest.mark.parametrize("sample_fps", ["0", "-1", "nan", "inf"])
+def test_cli_rejects_invalid_video_sample_fps(sample_fps: str) -> None:
     with pytest.raises(SystemExit):
-        main(["data/1.PNG", "--video-sample-fps", "0"])
+        main(["data/1.PNG", "--video-sample-fps", sample_fps])
 
 
 def test_cli_reports_video_extraction_errors(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -151,7 +152,7 @@ def test_cli_reports_video_extraction_errors(monkeypatch, tmp_path: Path, capsys
     def fail_extract(*args, **kwargs):
         raise ValueError("Could not read video")
 
-    monkeypatch.setattr("octopus_ocr.cli.extract_video_keyframes", fail_extract)
+    monkeypatch.setattr("octopus_ocr.inputs.extract_video_keyframes", fail_extract)
 
     with pytest.raises(SystemExit):
         main([str(video_path)])

@@ -1,12 +1,57 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
+import pytest
 
 from octopus_ocr.models import BBox, OcrField
-from octopus_ocr.ocr import PaddleOcr, _choose_amount_ocr_result, _trim_ocr_whitespace
+from octopus_ocr.ocr import PaddleOcr, _choose_amount_ocr_result, _extract_paddle_lines, _trim_ocr_whitespace
+
+
+@pytest.mark.parametrize(
+    ("secondary_text", "expected"),
+    [("-7.4", "-7.4"), ("−7.4", "-7.4"), ("-74", "-74"), ("−74", "-74"), ("7.40", "7.40"), (".4", "0.4")],
+)
+def test_amount_ocr_preserves_secondary_decimal_when_primary_is_empty(secondary_text: str, expected: str) -> None:
+    bbox = BBox(x=0, y=0, width=100, height=50)
+    primary = OcrField(text="", confidence=0.0, bbox=bbox)
+    secondary = OcrField(text=secondary_text, confidence=90.0, bbox=bbox)
+
+    result = _choose_amount_ocr_result(primary, secondary)
+
+    assert result == OcrField(text=expected, confidence=90.0, bbox=bbox)
+
+
+@pytest.mark.parametrize("invalid_box", [["bad"], ["bad", 0, 10, 10], None])
+def test_paddle_invalid_box_does_not_shift_text_or_confidence(invalid_box: object) -> None:
+    lines = _extract_paddle_lines(
+        {"rec_texts": ["invalid", "valid"], "rec_scores": [0.1, 0.9], "rec_boxes": [invalid_box, [1, 2, 3, 4]]}
+    )
+
+    assert len(lines) == 1
+    assert lines[0].text == "valid"
+    assert lines[0].confidence == 90.0
+    assert lines[0].box == (1.0, 2.0, 3.0, 4.0)
+
+
+def test_paddle_consumes_lazy_prediction_while_image_exists(monkeypatch) -> None:
+    class FakePaddleOCR:
+        def __init__(self, **kwargs):
+            pass
+
+        def predict(self, *, input):
+            assert Path(input).is_file()
+            yield {"rec_texts": ["MTR"], "rec_scores": [0.99], "rec_boxes": [[0, 0, 8, 8]]}
+
+    monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PaddleOCR=FakePaddleOCR))
+    bbox = BBox(x=0, y=0, width=8, height=8)
+
+    field = PaddleOcr().read_image(Image.new("RGB", (8, 8)), bbox, mode="payee")
+
+    assert field == OcrField(text="MTR", confidence=99.0, bbox=bbox)
 
 
 def test_amount_ocr_uses_higher_confidence_digit_read_when_primary_is_weak() -> None:
