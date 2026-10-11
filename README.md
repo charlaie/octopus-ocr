@@ -56,6 +56,16 @@ uv run octopus-ocr-gui
 The GUI accepts screenshots, screen recordings, and folders. It writes each run to a timestamped folder under
 `out/gui-runs/` and shows image/row progress while OCR is running.
 
+Add files to the source queue, choose a recognition engine in the sidebar, then select **Extract transactions**.
+You can remove individual files before a run. Paddle's model setting appears when Paddle is selected. When the run
+finishes, open the review CSV to check the results, then use the OFX file to import into Actual Budget. Monthly totals,
+transaction JSON, and the output folder are also available.
+
+The desktop shell uses pywebview, with macOS WebKit rendering a local HTML/CSS/JavaScript interface. Native file
+dialogs and file drops pass paths to the Python bridge, and OCR runs on a background thread. This is sufficient for
+the app's file queue, settings, progress, and exports. The UI assets live in `octopus_ocr/assets/ui/` and are bundled
+with the Python package. No frontend build or external UI resources are required.
+
 To create a local double-clickable app launcher:
 
 ```bash

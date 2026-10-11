@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Octopus OCR</title>
+  <style>/* OCTOPUS_STYLES */</style>
+</head>
+<body data-state="idle">
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5M3 12h18M8 7h8M8 17h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 6 4-6 4z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="m12 3 10 18H2zM12 9v5M12 17h.01"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Import settings">
+      <div class="brand">
+        <img src="{{APP_ICON}}" width="40" height="40" alt="" aria-hidden="true">
+        <div class="brand-name">Octopus OCR</div>
+      </div>
+
+      <ol class="workflow" aria-label="Import workflow">
+        <li id="step-files" class="current" aria-current="step"><span class="step-marker">1</span><strong>Add your files</strong></li>
+        <li id="step-extract"><span class="step-marker">2</span><strong>Extract transactions</strong></li>
+        <li id="step-review"><span class="step-marker">3</span><strong>Review &amp; import</strong></li>
+      </ol>
+
+      <section class="recognition" aria-labelledby="recognition-title">
+        <h2 id="recognition-title">Recognition</h2>
+        <label for="ocr-engine">OCR engine</label>
+        <div class="select-wrap"><select id="ocr-engine" disabled><option value="tesseract">Tesseract</option><option value="paddle">Paddle</option></select></div>
+        <div id="paddle-settings" hidden>
+          <label for="paddle-model">Recognition model</label>
+          <input id="paddle-model" value="en_PP-OCRv5_mobile_rec" spellcheck="false" autocomplete="off" disabled>
+        </div>
+      </section>
+
+    </aside>
+
+    <main>
+      <header class="workspace-header">
+        <h1>Import transactions</h1>
+        <div class="session-status" id="session-status"><span class="status-dot"></span><span id="session-label">Connecting</span></div>
+      </header>
+
+      <div class="alert" id="error" role="alert" hidden></div>
+
+      <section class="sources" aria-labelledby="input-title">
+        <div class="section-heading">
+          <div class="heading-with-count"><h2 id="input-title">Source files</h2><span class="count" id="input-count">0</span></div>
+          <div class="queue-actions" id="queue-actions" hidden>
+            <button class="quiet-button" id="add-files" data-source disabled><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add files</button>
+            <button class="quiet-button" id="add-folder" data-source disabled><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Add folder</button>
+            <button class="quiet-button" id="clear" data-source disabled>Clear</button>
+          </div>
+        </div>
+
+        <div class="source-body" id="dropzone">
+          <div class="drop-empty" id="drop-empty">
+            <svg class="source-art" viewBox="0 0 180 124" fill="none" aria-hidden="true">
+              <g transform="rotate(-11 62 64)"><rect x="29" y="15" width="65" height="91" rx="8" fill="#f0f5f3" stroke="#cbdcd3"/><rect x="38" y="25" width="47" height="6" rx="3" fill="#d1ded7"/><path d="M38 42h47M38 55h47M38 68h47M38 81h47" stroke="#d1ded7" stroke-width="3" stroke-linecap="round"/></g>
+              <g transform="rotate(8 111 62)"><rect x="76" y="10" width="73" height="100" rx="9" fill="white" stroke="#b8cec2"/><rect x="87" y="22" width="30" height="5" rx="2.5" fill="#506e5e"/><circle cx="91" cy="42" r="4" fill="#69bda0"/><circle cx="91" cy="60" r="4" fill="#eeb877"/><circle cx="91" cy="78" r="4" fill="#83a9d1"/><path d="M103 40h18M103 45h12M103 58h18M103 63h12M103 76h18M103 81h12" stroke="#cad9d1" stroke-width="3" stroke-linecap="round"/><path d="M129 41h9M129 59h9M129 77h9" stroke="#759485" stroke-width="3" stroke-linecap="round"/></g>
+              <path d="M66 28v-9h9M153 28v-9h-9M66 92v9h9M153 92v9h-9" stroke="#12825f" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M61 66h97" stroke="#12825f" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <h3>Drop your Octopus activity here</h3>
+            <div class="picker-actions">
+              <button id="pick-files" class="choose-button" data-source disabled><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Choose files</button>
+              <button id="pick-folder" data-source disabled><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Choose folder</button>
+            </div>
+          </div>
+          <div class="populated-sources" id="populated-sources" hidden>
+            <ul class="file-list" id="input-list" aria-label="Selected source files"></ul>
+            <div class="drop-more"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span id="drop-hint">Drop more files</span></div>
+          </div>
+          <div class="drop-overlay" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Drop to add your files</div>
+        </div>
+
+        <footer class="source-footer">
+          <p id="selection-summary" hidden></p>
+          <button class="primary-button" id="run" disabled><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><span id="run-label">Extract transactions</span></button>
+        </footer>
+      </section>
+
+      <section class="output" aria-labelledby="output-title">
+        <div class="section-heading output-heading"><h2 id="output-title">Export files</h2><span class="elapsed" id="elapsed" hidden><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span id="elapsed-label">0.0s</span></span></div>
+        <div class="run-status" id="run-status" aria-live="polite" aria-atomic="true">
+          <div class="run-icon" id="run-icon"><svg class="icon" aria-hidden="true"><use id="status-icon" href="#i-file"/></svg></div>
+          <div class="run-copy"><h3 id="status-title">Ready</h3><p id="status" hidden></p></div>
+          <span class="progress-percent" id="progress-percent" hidden>0%</span>
+        </div>
+        <div class="progress-track" id="progress-track" role="progressbar" aria-label="Estimated extraction progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="output-preview" id="output-preview"><span><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg>Review CSV</span><span><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg>Actual Budget OFX</span></div>
+
+        <div class="results" id="results" hidden>
+          <dl class="summary">
+            <div><dt>Transactions</dt><dd id="transactions">0</dd></div>
+            <div><dt>Rows detected</dt><dd id="rows">0</dd></div>
+            <div id="warning-metric"><dt>Rows to check</dt><dd id="warnings">0</dd></div>
+          </dl>
+          <div class="export-actions">
+            <button class="export-button" data-output="review"><span class="file-tag">CSV</span><span><strong>Review transactions</strong></span><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+            <button class="export-button" data-output="ofx"><span class="file-tag ofx-tag">OFX</span><span><strong>Open import file</strong></span><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          </div>
+          <div class="output-footer"><p id="output-path" title=""></p><button class="quiet-button" data-output="folder"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Show folder</button></div>
+          <details class="other-exports"><summary>More exports</summary><div><button class="quiet-button" data-output="monthly_totals">Monthly totals CSV</button><button class="quiet-button" data-output="transactions">Transaction JSON</button></div></details>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script>/* OCTOPUS_SCRIPT */</script>
+</body>
+</html>

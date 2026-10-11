@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
+import logging
 import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any, cast
+from typing import Literal, Protocol, Sequence
 
 from octopus_ocr.gui_service import DEFAULT_PADDLE_MODEL, GuiRunResult, run_gui_pipeline
 from octopus_ocr.inputs import expand_input_paths
@@ -13,83 +15,154 @@ from octopus_ocr.ocr import OcrEngineName, OcrUnavailableError
 from octopus_ocr.pipeline import ProgressEvent
 
 
+class GuiWindow(Protocol):
+    def evaluate_js(self, script: str) -> object: ...
+
+    def create_file_dialog(
+        self, dialog_type: int, *, allow_multiple: bool = False, file_types: tuple[str, ...] = (),
+    ) -> Sequence[str] | None: ...
+
+
 class GuiApi:
     def __init__(self) -> None:
-        self.window: Any | None = None
+        self.window: GuiWindow | None = None
         self._paths: list[Path] = []
         self._running = False
         self._last_result: GuiRunResult | None = None
+        self._run_error: str | None = None
+        self._progress: ProgressEvent | None = None
+        self._revision = 0
         self._lock = threading.Lock()
 
-    def add_paths(self, paths: list[str]) -> dict[str, object]:
+    def add_paths(self, paths: object) -> dict[str, object]:
         with self._lock:
+            if self._running:
+                return self._inputs_snapshot(error="Wait for the current run to finish before changing files.")
+            if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+                return self._inputs_snapshot(error="Choose supported file or folder paths.")
             combined = [*self._paths, *(Path(path) for path in paths)]
-            self._paths = expand_input_paths(combined)
+            expanded = expand_input_paths(combined)
+            added = len(expanded) - len(self._paths)
+            if expanded != self._paths:
+                self._reset_result()
+            self._paths = expanded
+            snapshot = self._inputs_snapshot(
+                error="No new supported files found. Choose PNG, JPG, JPEG, MOV, MP4, or M4V files."
+                if paths and added == 0 else None,
+            )
+        self._notify(snapshot)
+        return snapshot
+
+    def get_inputs(self) -> dict[str, object]:
+        with self._lock:
+            return self._inputs_snapshot()
+
+    def remove_input(self, path: object) -> dict[str, object]:
+        with self._lock:
+            if self._running:
+                return self._inputs_snapshot(error="Wait for the current run to finish before changing files.")
+            if not isinstance(path, str):
+                return self._inputs_snapshot(error="Choose a file from the queue to remove.")
+            remaining = [item for item in self._paths if str(item) != path]
+            if remaining != self._paths:
+                self._paths = remaining
+                self._reset_result()
             snapshot = self._inputs_snapshot()
-        self._notify("onInputsChanged", snapshot)
+        self._notify(snapshot)
         return snapshot
 
     def choose_files(self) -> dict[str, object]:
         import webview
 
         if self.window is None:
-            return self._inputs_snapshot(error="Window is not ready.")
+            with self._lock:
+                return self._inputs_snapshot(error="Window is not ready.")
         selected = self.window.create_file_dialog(
-            webview.OPEN_DIALOG,
+            int(webview.OPEN_DIALOG),
             allow_multiple=True,
             file_types=("Supported files (*.png;*.jpg;*.jpeg;*.mp4;*.mov;*.m4v)",),
         )
         if selected:
             return self.add_paths(list(selected))
-        return self._inputs_snapshot()
+        return self.get_inputs()
 
     def choose_folder(self) -> dict[str, object]:
         import webview
 
         if self.window is None:
-            return self._inputs_snapshot(error="Window is not ready.")
-        selected = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+            with self._lock:
+                return self._inputs_snapshot(error="Window is not ready.")
+        selected = self.window.create_file_dialog(int(webview.FOLDER_DIALOG))
         if selected:
             return self.add_paths([selected[0]])
-        return self._inputs_snapshot()
+        return self.get_inputs()
 
     def clear_inputs(self) -> dict[str, object]:
         with self._lock:
+            if self._running:
+                return self._inputs_snapshot(error="Wait for the current run to finish before changing files.")
             self._paths = []
-            self._last_result = None
+            self._reset_result()
             snapshot = self._inputs_snapshot()
-        self._notify("onInputsChanged", snapshot)
+        self._notify(snapshot)
         return snapshot
 
-    def run(self, options: dict[str, str]) -> dict[str, object]:
+    def run(self, options: object) -> dict[str, object]:
+        if not isinstance(options, dict):
+            return self._reject_run("Choose recognition settings before starting a run.")
+        engine = options.get("ocr_engine", "tesseract")
+        if not isinstance(engine, str) or engine not in {"tesseract", "paddle"}:
+            return self._reject_run("Choose Tesseract or Paddle for recognition.")
+        paddle_model = options.get("paddle_model", DEFAULT_PADDLE_MODEL)
+        if paddle_model is None or paddle_model == "":
+            paddle_model = DEFAULT_PADDLE_MODEL
+        if not isinstance(paddle_model, str):
+            return self._reject_run("Choose a Paddle model name.")
+        ocr_engine: OcrEngineName = "paddle" if engine == "paddle" else "tesseract"
         with self._lock:
             if self._running:
-                return {"accepted": False, "error": "A run is already in progress."}
+                return {"accepted": False, "error": "A run is already in progress.", "snapshot": self._inputs_snapshot()}
             if not self._paths:
-                return {"accepted": False, "error": "Drop at least one supported image, video, or folder."}
+                return {"accepted": False, "error": "Drop at least one supported image, video, or folder.", "snapshot": self._inputs_snapshot()}
             paths = list(self._paths)
             self._running = True
+            self._last_result = None
+            self._run_error = None
+            self._progress = None
+            self._revision += 1
+            snapshot = self._inputs_snapshot()
 
-        ocr_engine = cast(OcrEngineName, options.get("ocr_engine", "tesseract"))
-        paddle_model = options.get("paddle_model") or DEFAULT_PADDLE_MODEL
-        self._notify("onRunStarted", {"message": "Starting OCR"})
-        thread = threading.Thread(
-            target=self._run_background,
-            args=(paths, ocr_engine, paddle_model),
-            daemon=True,
-        )
-        thread.start()
+        self._notify(snapshot)
+        try:
+            thread = threading.Thread(
+                target=self._run_background,
+                args=(paths, ocr_engine, paddle_model),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            message = str(exc) or exc.__class__.__name__
+            self._finish_with_error(message)
+            return self._reject_run(message)
         return {"accepted": True}
 
-    def open_output(self, key: str) -> dict[str, object]:
+    def _reject_run(self, message: str) -> dict[str, object]:
+        return {"accepted": False, "error": message, "snapshot": self.get_inputs()}
+
+    def open_output(self, key: object) -> dict[str, object]:
         with self._lock:
             result = self._last_result
         if result is None:
             return {"ok": False, "error": "No completed run is available."}
-        path = result.output_files.get(key)
+        path = result.output_files.get(key) if isinstance(key, str) else None
         if path is None:
             return {"ok": False, "error": f"Unknown output: {key}"}
-        subprocess.run(["open", str(path)], check=False)
+        try:
+            process = subprocess.run(["open", str(path)], capture_output=True, text=True, check=False)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        if process.returncode != 0:
+            return {"ok": False, "error": process.stderr.strip() or f"Could not open {path}"}
         return {"ok": True}
 
     def _run_background(self, paths: list[Path], ocr_engine: OcrEngineName, paddle_model: str) -> None:
@@ -108,30 +181,61 @@ class GuiApi:
             with self._lock:
                 self._last_result = result
                 self._running = False
-            self._notify("onRunComplete", result.to_dict())
+                self._revision += 1
+                snapshot = self._inputs_snapshot()
+            self._notify(snapshot)
 
     def _finish_with_error(self, message: str) -> None:
         with self._lock:
             self._running = False
-        self._notify("onRunError", {"message": message})
+            self._run_error = message
+            self._revision += 1
+            snapshot = self._inputs_snapshot()
+        self._notify(snapshot)
 
     def _on_progress(self, event: ProgressEvent) -> None:
-        self._notify("onProgress", _progress_to_dict(event))
+        with self._lock:
+            self._progress = event
+            self._revision += 1
+            snapshot = self._inputs_snapshot()
+        self._notify(snapshot)
+
+    def _reset_result(self) -> None:
+        self._last_result = None
+        self._run_error = None
+        self._progress = None
+        self._revision += 1
 
     def _inputs_snapshot(self, *, error: str | None = None) -> dict[str, object]:
         payload: dict[str, object] = {
+            "revision": self._revision,
             "paths": [str(path) for path in self._paths],
             "count": len(self._paths),
+            "phase": self._phase(),
+            "progress": _progress_to_dict(self._progress) if self._progress is not None else None,
+            "result": self._last_result.to_dict() if self._last_result is not None else None,
+            "run_error": self._run_error,
         }
         if error is not None:
             payload["error"] = error
         return payload
 
-    def _notify(self, callback: str, payload: dict[str, object]) -> None:
+    def _phase(self) -> Literal["idle", "running", "complete", "error"]:
+        if self._running:
+            return "running"
+        if self._last_result is not None:
+            return "complete"
+        return "error" if self._run_error is not None else "idle"
+
+    def _notify(self, payload: dict[str, object]) -> None:
         if self.window is None:
             return
-        script = f"window.OctopusOCR.{callback}({json.dumps(payload)})"
-        self.window.evaluate_js(script)
+        script = f"window.OctopusOCR.onStateChanged({json.dumps(payload)})"
+        try:
+            self.window.evaluate_js(script)
+        except Exception:
+            # UI delivery must not abort OCR or leave a claimed run without a worker.
+            logging.getLogger(__name__).warning("Could not update the desktop window", exc_info=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -144,32 +248,45 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     api = GuiApi()
-    window: Any = webview.create_window(
+    window = webview.create_window(
         "Octopus OCR",
-        html=_HTML,
+        html=_load_html(),
         js_api=api,
-        width=940,
-        height=700,
-        min_size=(760, 560),
+        width=1080,
+        height=780,
+        min_size=(780, 620),
+        background_color="#f4f7f6",
         text_select=True,
     )
+    if window is None:
+        print("Error: could not create the desktop window.", file=sys.stderr)
+        return 2
     api.window = window
 
     def bind() -> None:
         def on_drag(event: dict[str, object]) -> None:
             _ = event
 
-        def on_drop(event: dict[str, Any]) -> None:
+        def on_drop(event: dict[str, object]) -> None:
             transfer = event.get("dataTransfer") or event.get("domTransfer") or {}
+            if not isinstance(transfer, dict):
+                return
             files = transfer.get("files", [])
-            paths = [file.get("pywebviewFullPath") for file in files if file.get("pywebviewFullPath")]
+            if not isinstance(files, list):
+                return
+            paths: list[str] = []
+            for file in files:
+                if isinstance(file, dict):
+                    path = file.get("pywebviewFullPath")
+                    if isinstance(path, str) and path:
+                        paths.append(path)
             if paths:
                 api.add_paths(paths)
 
-        events = cast(Any, window.dom.document.events)
-        events.dragenter += DOMEventHandler(on_drag, True, True)
-        events.dragover += DOMEventHandler(on_drag, True, True, debounce=250)
-        events.drop += DOMEventHandler(on_drop, True, True)
+        document = window.dom.document
+        document.on("dragenter", DOMEventHandler(on_drag, True, True))
+        document.on("dragover", DOMEventHandler(on_drag, True, True, debounce=250))
+        document.on("drop", DOMEventHandler(on_drop, True, True))
 
     webview.start(bind)
     return 0
@@ -189,507 +306,16 @@ def _progress_to_dict(event: ProgressEvent) -> dict[str, object]:
     }
 
 
-_HTML = r"""
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f7f7f4;
-      --panel: #ffffff;
-      --ink: #202124;
-      --muted: #6b7069;
-      --line: #d8dad4;
-      --accent: #126d63;
-      --accent-strong: #0b534b;
-      --warn: #a13d2d;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--ink);
-      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    main {
-      display: grid;
-      grid-template-rows: auto auto 1fr auto;
-      gap: 16px;
-      min-height: 100vh;
-      padding: 22px;
-    }
-
-    header {
-      display: flex;
-      justify-content: space-between;
-      gap: 18px;
-      align-items: end;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: 24px;
-      font-weight: 650;
-      letter-spacing: 0;
-    }
-
-    .subtitle {
-      margin-top: 4px;
-      color: var(--muted);
-    }
-
-    .toolbar {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-
-    button, select, input {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--ink);
-      min-height: 34px;
-      padding: 7px 10px;
-      font: inherit;
-    }
-
-    button {
-      cursor: default;
-      user-select: none;
-    }
-
-    button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-      font-weight: 600;
-    }
-
-    button.primary:hover {
-      background: var(--accent-strong);
-    }
-
-    button:disabled {
-      opacity: 0.5;
-    }
-
-    .dropzone {
-      display: grid;
-      place-items: center;
-      min-height: 150px;
-      border: 1.5px dashed #aeb4aa;
-      border-radius: 8px;
-      background: #fbfbf8;
-      text-align: center;
-      padding: 24px;
-    }
-
-    .dropzone strong {
-      display: block;
-      font-size: 18px;
-      margin-bottom: 5px;
-    }
-
-    .dropzone span {
-      color: var(--muted);
-    }
-
-    .settings {
-      display: grid;
-      grid-template-columns: 190px minmax(220px, 1fr) auto;
-      gap: 10px;
-      align-items: end;
-    }
-
-    label {
-      display: grid;
-      gap: 5px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    label > span {
-      color: var(--muted);
-    }
-
-    .content {
-      display: grid;
-      grid-template-columns: minmax(260px, 1fr) minmax(300px, 0.9fr);
-      gap: 16px;
-      min-height: 0;
-    }
-
-    section {
-      min-height: 0;
-    }
-
-    h2 {
-      margin: 0 0 8px;
-      font-size: 14px;
-      font-weight: 650;
-      letter-spacing: 0;
-    }
-
-    .list {
-      height: 100%;
-      min-height: 220px;
-      max-height: 315px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-    }
-
-    .empty {
-      padding: 20px;
-      color: var(--muted);
-    }
-
-    .path {
-      padding: 9px 11px;
-      border-bottom: 1px solid #eceee8;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
-    }
-
-    .path:last-child {
-      border-bottom: 0;
-    }
-
-    .progress-panel {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      padding: 14px;
-    }
-
-    .progress-track {
-      height: 12px;
-      border-radius: 999px;
-      background: #e4e7df;
-      overflow: hidden;
-      margin: 10px 0 8px;
-    }
-
-    .progress-fill {
-      width: 0%;
-      height: 100%;
-      background: var(--accent);
-      transition: width 180ms ease;
-    }
-
-    .status {
-      min-height: 22px;
-      color: var(--muted);
-    }
-
-    .elapsed {
-      margin-top: 2px;
-      min-height: 20px;
-      color: var(--muted);
-      font-variant-numeric: tabular-nums;
-    }
-
-    .error {
-      margin-top: 10px;
-      color: var(--warn);
-      min-height: 20px;
-    }
-
-    .results {
-      display: none;
-      margin-top: 14px;
-      padding-top: 12px;
-      border-top: 1px solid var(--line);
-    }
-
-    .results.visible {
-      display: block;
-    }
-
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .metric {
-      border: 1px solid #eceee8;
-      border-radius: 6px;
-      padding: 8px;
-      background: #fbfbf8;
-    }
-
-    .metric b {
-      display: block;
-      font-size: 18px;
-    }
-
-    .metric span {
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .output-buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    @media (max-width: 760px) {
-      main {
-        padding: 16px;
-      }
-
-      header, .settings, .content {
-        grid-template-columns: 1fr;
-      }
-
-      header {
-        align-items: start;
-      }
-
-      .toolbar {
-        justify-content: flex-start;
-      }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>Octopus OCR</h1>
-        <div class="subtitle">Drop screenshots or folders, then export review CSV and OFX files.</div>
-      </div>
-      <div class="toolbar">
-        <button id="pick-files">Choose Files</button>
-        <button id="pick-folder">Choose Folder</button>
-        <button id="clear">Clear</button>
-      </div>
-    </header>
-
-    <div class="dropzone" id="dropzone">
-      <div>
-        <strong>Drop screenshots here</strong>
-        <span>PNG, JPG, JPEG, MOV, MP4, M4V; folders are expanded one level.</span>
-      </div>
-    </div>
-
-    <div class="settings">
-      <label>
-        <span>OCR engine</span>
-        <select id="ocr-engine">
-          <option value="tesseract">Tesseract</option>
-          <option value="paddle">Paddle</option>
-        </select>
-      </label>
-      <label>
-        <span>Paddle model</span>
-        <input id="paddle-model" value="en_PP-OCRv5_mobile_rec">
-      </label>
-      <button class="primary" id="run" disabled>Run OCR</button>
-    </div>
-
-    <div class="content">
-      <section>
-        <h2 id="input-title">Selected inputs</h2>
-        <div class="list" id="input-list">
-          <div class="empty">No inputs selected.</div>
-        </div>
-      </section>
-
-      <section>
-        <h2>Run status</h2>
-        <div class="progress-panel">
-          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
-          <div class="status" id="status">Ready.</div>
-          <div class="elapsed" id="elapsed">Elapsed: 0.0s</div>
-          <div class="error" id="error"></div>
-          <div class="results" id="results">
-            <div class="summary">
-              <div class="metric"><b id="rows">0</b><span>Rows</span></div>
-              <div class="metric"><b id="transactions">0</b><span>Transactions</span></div>
-              <div class="metric"><b id="warnings">0</b><span>Warnings</span></div>
-            </div>
-            <div class="output-buttons">
-              <button data-output="review">Review CSV</button>
-              <button data-output="monthly_totals">Totals CSV</button>
-              <button data-output="ofx">OFX</button>
-              <button data-output="transactions">JSON</button>
-              <button data-output="folder">Output Folder</button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
-  </main>
-
-  <script>
-    const state = { running: false, count: 0, startedAt: null, elapsedTimer: null };
-    const list = document.getElementById('input-list');
-    const title = document.getElementById('input-title');
-    const runButton = document.getElementById('run');
-    const fill = document.getElementById('progress-fill');
-    const statusEl = document.getElementById('status');
-    const elapsedEl = document.getElementById('elapsed');
-    const errorEl = document.getElementById('error');
-    const resultsEl = document.getElementById('results');
-
-    function setRunning(running) {
-      state.running = running;
-      runButton.disabled = running || state.count === 0;
-      document.getElementById('pick-files').disabled = running;
-      document.getElementById('pick-folder').disabled = running;
-      document.getElementById('clear').disabled = running;
-    }
-
-    function renderInputs(payload) {
-      state.count = payload.count || 0;
-      title.textContent = `Selected inputs (${state.count})`;
-      runButton.disabled = state.running || state.count === 0;
-      if (payload.error) errorEl.textContent = payload.error;
-      list.innerHTML = '';
-      if (!payload.paths || payload.paths.length === 0) {
-        list.innerHTML = '<div class="empty">No inputs selected.</div>';
-        return;
-      }
-      for (const path of payload.paths) {
-        const item = document.createElement('div');
-        item.className = 'path';
-        item.title = path;
-        item.textContent = path;
-        list.appendChild(item);
-      }
-    }
-
-    function progressPercent(event) {
-      if (event.phase === 'complete') return 100;
-      if (event.phase === 'export') return 96;
-      if (event.phase === 'ocr' && event.total_rows > 0) {
-        return 20 + Math.round((event.completed_rows / event.total_rows) * 76);
-      }
-      if (event.phase === 'detect' && event.image_count > 0) {
-        return Math.min(20, Math.round((event.image_index / event.image_count) * 20));
-      }
-      return 4;
-    }
-
-    function formatElapsed(seconds) {
-      if (seconds < 60) return `${seconds.toFixed(1)}s`;
-      const minutes = Math.floor(seconds / 60);
-      const remaining = seconds - minutes * 60;
-      return `${minutes}m ${remaining.toFixed(1).padStart(4, '0')}s`;
-    }
-
-    function setElapsed(seconds) {
-      elapsedEl.textContent = `Elapsed: ${formatElapsed(seconds)}`;
-    }
-
-    function updateElapsed() {
-      if (!state.startedAt) return;
-      setElapsed((Date.now() - state.startedAt) / 1000);
-    }
-
-    function stopElapsedTimer(finalSeconds = null) {
-      if (state.elapsedTimer) {
-        window.clearInterval(state.elapsedTimer);
-        state.elapsedTimer = null;
-      }
-      if (finalSeconds !== null) setElapsed(finalSeconds);
-      state.startedAt = null;
-    }
-
-    function startElapsedTimer() {
-      stopElapsedTimer();
-      state.startedAt = Date.now();
-      setElapsed(0);
-      state.elapsedTimer = window.setInterval(updateElapsed, 250);
-    }
-
-    window.OctopusOCR = {
-      onInputsChanged(payload) {
-        renderInputs(payload);
-      },
-      onRunStarted(payload) {
-        setRunning(true);
-        errorEl.textContent = '';
-        resultsEl.classList.remove('visible');
-        fill.style.width = '2%';
-        statusEl.textContent = payload.message || 'Starting OCR';
-        startElapsedTimer();
-      },
-      onProgress(event) {
-        fill.style.width = `${progressPercent(event)}%`;
-        statusEl.textContent = event.message || 'Working';
-      },
-      onRunComplete(result) {
-        setRunning(false);
-        stopElapsedTimer(result.total_seconds);
-        fill.style.width = '100%';
-        statusEl.textContent = `Complete in ${result.total_seconds.toFixed(2)}s. Output: ${result.output_dir}`;
-        document.getElementById('rows').textContent = result.detected_rows;
-        document.getElementById('transactions').textContent = result.exported_transactions;
-        document.getElementById('warnings').textContent = result.warning_rows;
-        resultsEl.classList.add('visible');
-      },
-      onRunError(payload) {
-        setRunning(false);
-        stopElapsedTimer();
-        statusEl.textContent = 'Run failed.';
-        errorEl.textContent = payload.message || 'Unknown error.';
-      }
-    };
-
-    document.getElementById('pick-files').addEventListener('click', () => {
-      window.pywebview.api.choose_files().then(renderInputs);
-    });
-    document.getElementById('pick-folder').addEventListener('click', () => {
-      window.pywebview.api.choose_folder().then(renderInputs);
-    });
-    document.getElementById('clear').addEventListener('click', () => {
-      window.pywebview.api.clear_inputs().then(renderInputs);
-      fill.style.width = '0%';
-      statusEl.textContent = 'Ready.';
-      stopElapsedTimer(0);
-      errorEl.textContent = '';
-      resultsEl.classList.remove('visible');
-    });
-    runButton.addEventListener('click', () => {
-      window.pywebview.api.run({
-        ocr_engine: document.getElementById('ocr-engine').value,
-        paddle_model: document.getElementById('paddle-model').value
-      }).then((response) => {
-        if (!response.accepted) errorEl.textContent = response.error || 'Could not start run.';
-      });
-    });
-    document.querySelectorAll('[data-output]').forEach((button) => {
-      button.addEventListener('click', () => {
-        window.pywebview.api.open_output(button.dataset.output).then((response) => {
-          if (!response.ok) errorEl.textContent = response.error || 'Could not open output.';
-        });
-      });
-    });
-  </script>
-</body>
-</html>
-"""
+def _load_html() -> str:
+    assets = Path(__file__).with_name("assets")
+    ui = assets / "ui"
+    icon = base64.b64encode((assets / "octopus_ocr_icon.svg").read_bytes()).decode("ascii")
+    return (
+        (ui / "index.html").read_text(encoding="utf-8")
+        .replace("/* OCTOPUS_STYLES */", (ui / "app.css").read_text(encoding="utf-8"))
+        .replace("/* OCTOPUS_SCRIPT */", (ui / "app.js").read_text(encoding="utf-8"))
+        .replace("{{APP_ICON}}", f"data:image/svg+xml;base64,{icon}")
+    )
 
 
 if __name__ == "__main__":
